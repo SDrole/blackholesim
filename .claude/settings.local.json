@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python \"C:\\\\Users\\\\toute\\\\Desktop\\\\blackholesim\\\\build\\\\analyze.py\")",
+      "Bash(claude mcp *)",
+      "Bash(echo \"---EXIT:$?---\")",
+      "Bash(npm view *)",
+      "Bash(cmd *)",
+      "PowerShell(cmd /c '\"C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\18\\\\BuildTools\\\\VC\\\\Auxiliary\\\\Build\\\\vcvars64.bat\" && cmake --build build --config Release')",
+      "PowerShell($env:OMP_NUM_THREADS=\"\"; & .\\\\build\\\\blackholesim.exe 480 270 1 0.9 output_zamo_check)",
+      "Bash(python *)",
+      "Bash(ssh *)"
+    ]
+  }
+}

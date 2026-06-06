@@ -1,0 +1,13 @@
+# ninja log v6
+4331	5177	8024610454367920	blackholesim.exe	218d3df7ea802edc
+52	2425	8024610411598519	CMakeFiles/blackholesim.dir/src/Metric.cpp.obj	4fced6b311901d86
+44	4331	8024610411442251	CMakeFiles/blackholesim.dir/src/main.cpp.obj	eb9536a698fe928d
+516	3241	8024580463279446	CMakeFiles/blackholesim.dir/src/Geodesic.cpp.obj	4b9129127cdd4096
+84	3674	8024610411908734	CMakeFiles/blackholesim.dir/src/Renderer.cpp.obj	814d296a629a654d
+566	3023	8024580463668385	CMakeFiles/blackholesim.dir/src/Integrator.cpp.obj	923c6c3f5db9da06
+67	2388	8024610411737664	CMakeFiles/blackholesim.dir/src/Camera.cpp.obj	e9ded02e83d840a
+49	3283	8024393520238607	CMakeFiles/blackholesim.dir/src/Vec3.cpp.obj	8324ca8120b0a142
+92	3605	8024610411999376	CMakeFiles/blackholesim.dir/src/Image.cpp.obj	49d75572274d4d51
+128	6885	8024752562439256	CMakeFiles/blackholesim.dir/src/Renderer.cpp.obj	814d296a629a654d
+60	6895	8024752561731246	CMakeFiles/blackholesim.dir/src/main.cpp.obj	eb9536a698fe928d
+6896	10238	8024752630116253	blackholesim.exe	218d3df7ea802edc
