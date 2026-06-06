@@ -54,11 +54,12 @@ struct GpuParams {
     // Disque de Novikov-Thorne.
     int    diskEnabled;
     double isco, diskOuter, diskShapeMax, diskTempScaleK, diskPeakR, diskGain;
+    double diskExposure, diskOpacity;   // contraste volumétrique (exposition + opacité χ)
 
     // Texture de plasma (fBm + bras spiraux).
     double noiseStrength, noiseFreq, noiseLacunarity, noiseGain;
     int    noiseOctaves, spiralArms;
-    double spiralPitch, spiralStrength;
+    double spiralPitch, spiralStrength, noiseEvolution;
 
     // Intégrateur RKF45 adaptatif.
     double tolerance, stepInitial, stepMax, stepMin, horizonMargin, rPlus, safety;
@@ -400,7 +401,9 @@ __device__ float dev_plasmaDensity(double r, double sinT, double cosT, double ph
     const float fr  = (float)p.noiseFreq;
     const float nx  = cyl * __cosf(ph) * fr;
     const float ny  = cyl * __sinf(ph) * fr;
-    const float nz  = z * fr;
+    // 3e dimension du bruit décalée dans le temps : la turbulence évolue (se forme
+    // et se dissipe) au fil des frames, au-delà de la simple co-rotation rigide.
+    const float nz  = z * fr + (float)p.noiseEvolution * (float)p.animTime;
     float turb = dev_fbmf(nx, ny, nz, p.noiseOctaves,
                           (float)p.noiseLacunarity, (float)p.noiseGain);
     float fil = fmaxf(1.0f + (float)p.noiseStrength * turb, 0.0f);
@@ -510,9 +513,12 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
 
     // Constantes du transfert radiatif (unités du moteur). emit/abs = fonction
     // source ; la densité s'annule dans S et ne pilote que la profondeur optique.
-    const float kAbs       = 0.65f;              // χ = kAbs · densité  (opacité locale)
-    const float kSrc       = (float)p.diskGain;  // j/χ = kSrc · g⁴ · Planck(T_obs)
-    const float marchStep  = 0.05f;              // pas λ max imposé dans le volume
+    // diskOpacity ↑ rend la face avant optiquement épaisse → l'émission sature à la
+    // fonction source et les filaments restent contrastés dans la zone très brillante ;
+    // diskExposure module globalement la luminosité du disque (anti-saturation bleu).
+    const float kAbs       = (float)p.diskOpacity;                 // χ = kAbs · densité
+    const float kSrc       = (float)(p.diskGain * p.diskExposure); // j/χ = kSrc · g⁴ · Planck(T_obs)
+    const float marchStep  = 0.05f;                               // pas λ max imposé dans le volume
 
     double h = p.stepInitial;
     double maxDrift = 0.0;
@@ -684,11 +690,13 @@ RenderResult Renderer::renderGPU() const {
     p.isco = isco_;  p.diskOuter = cfg_.diskOuter;
     p.diskShapeMax = diskShapeMax_;  p.diskTempScaleK = cfg_.diskTempScaleK;
     p.diskPeakR = diskPeakR_;  p.diskGain = 5.0;   // kDiskGain (cf. Renderer.cpp)
+    p.diskExposure = cfg_.diskExposure;  p.diskOpacity = cfg_.diskOpacity;
 
     p.noiseStrength = cfg_.diskNoiseStrength;  p.noiseFreq = cfg_.diskNoiseFreq;
     p.noiseLacunarity = cfg_.diskNoiseLacunarity;  p.noiseGain = cfg_.diskNoiseGain;
     p.noiseOctaves = cfg_.diskNoiseOctaves;  p.spiralArms = cfg_.diskSpiralArms;
     p.spiralPitch = cfg_.diskSpiralPitch;  p.spiralStrength = cfg_.diskSpiralStrength;
+    p.noiseEvolution = cfg_.diskNoiseEvolution;
 
     p.tolerance = cfg_.tolerance;  p.stepInitial = cfg_.stepInitial;
     p.stepMax = cfg_.stepMax;  p.stepMin = cfg_.stepMin;

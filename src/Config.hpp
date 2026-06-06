@@ -33,6 +33,14 @@ struct Config {
     double diskTempScaleK = 7000.0;     // température (K) au pic du profil
     double dopplerExponent = 4.0;       // amplification relativiste (g^4 bolométrique)
 
+    // --- Exposition / opacité volumétrique (contraste du plasma) ----------------
+    // Le flanc gauche (blueshifté, beaming g^4) sature en blanc pur si le volume
+    // reste optiquement mince. Augmenter diskOpacity rend la face avant optiquement
+    // épaisse : l'émission sature à la fonction source et les filaments de
+    // turbulence redeviennent discernables dans la zone ultra-lumineuse.
+    double diskExposure = 0.8;          // multiplicateur d'exposition du disque (GPU)
+    double diskOpacity  = 1.5;          // χ = diskOpacity · densité (1 = ancien rendu mince)
+
     // --- Texture de plasma du disque (bruit de Perlin 3D relativiste) -----------
     // Le disque homogène est modulé par une turbulence fractale (fBm) couplée au
     // rayon r et à l'angle φ, co-tournée à la vitesse képlérienne relativiste
@@ -45,6 +53,10 @@ struct Config {
     int    diskSpiralArms    = 2;       // nombre de bras spiraux (0 = aucun)
     double diskSpiralPitch   = 2.6;     // serrage logarithmique des bras
     double diskSpiralStrength = 0.45;   // contraste des bras spiraux
+    // Évolution temporelle du champ de bruit (en plus de la co-rotation rigide) :
+    // décale la phase fractale au fil des frames pour une turbulence « vivante »
+    // (filaments qui se forment et se dissipent), pas seulement tournante.
+    double diskNoiseEvolution = 0.015;  // vitesse d'évolution du bruit (par unité de temps M)
 
     // --- Ciel étoilé d'arrière-plan --------------------------------------------
     // Si starTexturePath pointe vers un BMP 24 bits équirectangulaire, il est
