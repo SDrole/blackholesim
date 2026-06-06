@@ -1,0 +1,153 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineSystem.cmake:212 (message)"
+      - "CMakeLists.txt:13 (project)"
+    message: |
+      The system is: Windows - 10.0.19045 - AMD64
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineCompiler.cmake:54 (find_program)"
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineCUDACompiler.cmake:39 (_cmake_find_compiler)"
+      - "CMakeLists.txt:13 (project)"
+    mode: "program"
+    variable: "CMAKE_CUDA_COMPILER"
+    description: "CUDA compiler"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "nvcc"
+    candidate_directories:
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/"
+      - "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/"
+    searched_directories:
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/nvcc.com"
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/nvcc.exe"
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/nvcc"
+      - "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/nvcc.com"
+      - "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/nvcc.exe"
+      - "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/nvcc"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\VC\\Tools\\MSVC\\14.50.35717\\bin\\HostX64\\x64"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\VC\\VCPackages"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\MSBuild\\Current\\bin\\Roslyn"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\Extensions\\Microsoft\\CodeCoverage.Console"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\\\x64"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\\\x64"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\\\MSBuild\\Current\\Bin\\amd64"
+        - "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\Tools\\"
+        - "c:\\Users\\toute\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\debugCommand"
+        - "c:\\Users\\toute\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\copilotCli"
+        - "C:\\Python314\\Scripts\\"
+        - "C:\\Python314\\"
+        - "C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.10.7-hotspot\\bin"
+        - "C:\\Windows\\system32"
+        - "C:\\Windows"
+        - "C:\\Windows\\System32\\Wbem"
+        - "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\Windows\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "C:\\Users\\toute\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\toute\\AppData\\Local\\Python\\bin"
+        - "C:\\Users\\toute\\AppData\\Roaming\\npm"
+        - "C:\\Users\\toute\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\toute\\AppData\\Roaming\\Python\\Python314\\Scripts"
+        - "C:\\Program Files (x86)\\Nmap"
+        - "c:\\Users\\toute\\.vscode\\extensions\\ms-python.debugpy-2026.6.0-win32-x64\\bundled\\scripts\\noConfigScripts"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\VC\\Linux\\bin\\ConnectionManagerExe"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\VC\\vcpkg"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineCompilerId.cmake:1303 (message)"
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineCUDACompiler.cmake:99 (CMAKE_DETERMINE_COMPILER_ID_VENDOR)"
+      - "CMakeLists.txt:13 (project)"
+    message: |
+      Checking whether the CUDA compiler is NVIDIA using "" did not match "nvcc: [^
+      ]+ Cuda compiler driver":
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineCompilerId.cmake:1303 (message)"
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineCUDACompiler.cmake:99 (CMAKE_DETERMINE_COMPILER_ID_VENDOR)"
+      - "CMakeLists.txt:13 (project)"
+    message: |
+      Checking whether the CUDA compiler is Clang using "" did not match "(clang version)":
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/Internal/CMakeCUDAFindToolkit.cmake:15 (find_program)"
+      - "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.2/Modules/CMakeDetermineCUDACompiler.cmake:109 (cmake_cuda_find_toolkit)"
+      - "CMakeLists.txt:13 (project)"
+    mode: "program"
+    variable: "_CUDA_NVCC_EXECUTABLE"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "nvcc"
+      - "nvcc.exe"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\VC\\Tools\\MSVC\\14.50.35717\\bin\\HostX64\\x64"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\VC\\VCPackages"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\MSBuild\\Current\\bin\\Roslyn"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\Extensions\\Microsoft\\CodeCoverage.Console"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\\\x64"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\\\x64"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\\\MSBuild\\Current\\Bin\\amd64"
+        - "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\Tools\\"
+        - "c:\\Users\\toute\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\debugCommand"
+        - "c:\\Users\\toute\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\copilotCli"
+        - "C:\\Python314\\Scripts\\"
+        - "C:\\Python314\\"
+        - "C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.10.7-hotspot\\bin"
+        - "C:\\Windows\\system32"
+        - "C:\\Windows"
+        - "C:\\Windows\\System32\\Wbem"
+        - "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\Windows\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "C:\\Users\\toute\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\toute\\AppData\\Local\\Python\\bin"
+        - "C:\\Users\\toute\\AppData\\Roaming\\npm"
+        - "C:\\Users\\toute\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\toute\\AppData\\Roaming\\Python\\Python314\\Scripts"
+        - "C:\\Program Files (x86)\\Nmap"
+        - "c:\\Users\\toute\\.vscode\\extensions\\ms-python.debugpy-2026.6.0-win32-x64\\bundled\\scripts\\noConfigScripts"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\Ninja"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\VC\\Linux\\bin\\ConnectionManagerExe"
+        - "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\VC\\vcpkg"
+...
