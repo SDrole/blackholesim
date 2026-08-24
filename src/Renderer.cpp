@@ -305,6 +305,40 @@ double Renderer::diskDensity(double r, double sinTheta, double cosTheta, double 
     return vert * rad * diskTexture(r, phi);
 }
 
+// Backend procédural de l'interface PlasmaState (cf. Plasma.hpp). Pure
+// plomberie : rho reprend diskDensity() telle quelle (même seuil de validité
+// 1e-4 que l'ancien test inline dans traceRay), zéro nouvelle physique.
+//
+// La quadrivitesse u^mu est celle d'une orbite circulaire képlérienne
+// équatoriale exacte (Ω(r) et u^t déjà calculés ailleurs dans Metric.cpp,
+// utilisés ici tels quels — pas une approximation nouvelle). Le champ B est
+// en revanche un JOUET (toroïdal, aligné sur l'écoulement, magnitude
+// arbitraire) : aucun backend GRMHD réel ne l'alimente encore, donc B4 n'est
+// pas utilisé par le pipeline de rendu actuel (réservé aux étapes 3-4 :
+// coefficients synchrotron / polarisation, cf. docs/SESSION_LOG_AND_ROADMAP.md).
+PlasmaState Renderer::sampleProceduralPlasma(double r, double sinTheta, double cosTheta, double phi) const {
+    PlasmaState ps;
+    ps.rho = diskDensity(r, sinTheta, cosTheta, phi);
+    ps.valid = ps.rho > 1e-4;
+    if (!ps.valid) return ps;
+
+    const double Omega = bh_.orbitalOmega(r);
+    const double ut = bh_.orbitalUt(r);
+    ps.u4[0] = ut;
+    ps.u4[1] = 0.0;
+    ps.u4[2] = 0.0;
+    ps.u4[3] = Omega * ut;
+
+    ps.B4[0] = 0.0;
+    ps.B4[1] = 0.0;
+    ps.B4[2] = 0.0;
+    ps.B4[3] = Omega * ut;   // toy field, même direction que le flot
+
+    ps.Theta_e = 0.0;        // non peuplé avant l'étape 2 (prescription R-beta)
+
+    return ps;
+}
+
 // Fonction source du transfert radiatif : corps noir de Page-Thorne à la
 // température perçue T_obs = g·T_em. Le beaming bolométrique (Stefan-Boltzmann
 // L ∝ T_obs⁴, invariance relativiste de I_ν/ν³) est DÉJÀ porté par la LUT
@@ -438,9 +472,10 @@ Renderer::Sample Renderer::traceRay(const Photon& photon) const {
             const double thm = 0.5 * (y.theta + yNew.theta);
             const double phm = 0.5 * (y.phi + yNew.phi);
             const double sinM = std::max(std::sin(thm), 1e-6), cosM = std::cos(thm);
-            const double dens = diskDensity(rm, sinM, cosM, phm);
+            const PlasmaState ps = sampleProceduralPlasma(rm, sinM, cosM, phm);
 
-            if (dens > 1e-4) {
+            if (ps.valid) {
+                const double dens = ps.rho;
                 // Longueur géométrique du segment (pseudo-cartésien de Kerr).
                 const Vec3 p0 = kerrCartesian(y.r,    std::max(std::sin(y.theta), 1e-6),    std::cos(y.theta),    y.phi,    a);
                 const Vec3 p1 = kerrCartesian(yNew.r, std::max(std::sin(yNew.theta), 1e-6), std::cos(yNew.theta), yNew.phi, a);
