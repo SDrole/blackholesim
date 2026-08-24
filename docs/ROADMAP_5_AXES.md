@@ -95,66 +95,122 @@ Privilégier Athena++/KHARMA/iharm3D si on veut adapter du code réel.
 
 ### Briques à construire, dans l'ordre
 
-**S0 — Infrastructure & sortie HDF5**
-Répertoire `grmhd/`, cible CMake séparée, structures de grille, écriture
-HDF5 au format iharm. *Fait en premier volontairement* : pouvoir dumper et
-inspecter l'état est l'outil de debug principal de tout ce qui suit.
+> **Découpage révisé le 2026-08-25.** La version initiale mélangeait hydro et
+> MHD : elle testait l'inversion « en forte magnétisation » (S2) alors que le
+> champ B n'arrivait qu'en S5, et proposait les tubes à choc de Komissarov
+> (qui sont **SRMHD**) pour un cœur annoncé hydro (S3). Le découpage ci-dessous
+> sépare proprement hydro → GR hydro → MHD → GRMHD.
+>
+> Précision importante : l'inversion U→P **hydro** (S2) et l'inversion
+> **magnétisée** (S5) ne sont PAS la même brique à un terme près — ce sont deux
+> algorithmes différents, le second nettement plus dur (c'est celui de Noble et
+> al. 2006, là où les codes cassent réellement).
+
+**S0 ✅ FAIT + S1 ✅ FAIT (2026-08-25)** — `grmhd/` : `Grid.hpp`,
+`Coordinates.hpp` (MKS), `KerrSchild.hpp/.cpp`, `LinAlg.hpp`, `tests_s1.cpp`.
+Cible CMake séparée `grmhd_tests`. 15 tests passent (voir détail des pièges
+ci-dessous). Reste ouvert : backend HDF5 (différé en S3/S4, cf. note
+dépendance), et l'écriture d'état fluide (rien à écrire tant qu'il n'y a pas
+de fluide).
+
+**S0 — Infrastructure & sortie**
+Répertoire `grmhd/`, cible CMake séparée, structures de grille, interface
+d'écriture d'état. *Fait en premier volontairement* : pouvoir dumper et
+inspecter est l'outil de debug principal de tout ce qui suit.
+*Note dépendance* : HDF5 n'est pas installé en local (absent de winget ;
+conda est la voie). À S0-S1 il n'y a aucun état fluide à écrire — backend
+binaire/CSV sans dépendance d'abord, **backend HDF5 format iharm branché en
+S3/S4**, quand il y a réellement des données à échanger avec blackholesim.
 
 **S1 — Métrique & coordonnées (Kerr-Schild)**
 ⚠️ Différence importante avec l'existant : le ray tracer utilise
 Boyer-Lindquist (singulier à l'horizon). Un solveur GRMHD a besoin de
-**Kerr-Schild** (pénétrant l'horizon) + transformation MKS/FMKS (maillage
-log en r, concentration en θ vers le plan équatorial).
+**Kerr-Schild** (pénétrant l'horizon) + transformation MKS (maillage log en
+r, concentration en θ vers le plan équatorial).
 Livrables : `g_μν`, `g^μν`, `√-g`, symboles de Christoffel.
-*Tests* : `g·g⁻¹ = I` à la précision machine ; `√-g` vs formule analytique ;
-Christoffels vs différences finies de la métrique.
+*Tests* : `g·g⁻¹ = I` ; `√-g` vs formule analytique `Σ sinθ` (validation
+indépendante de la métrique covariante) ; symétrie de Γ ; stationnarité +
+axisymétrie ; régularité à l'horizon (composantes finies en `r₊`,
+contrairement à BL) ; **conservation des quantités de Killing `p_t`, `p_φ` et
+du caractère nul le long de géodésiques intégrées** (le vrai test de la
+connexion).
 
-**S2 — Conversion variables primitives ↔ conservatives**
-`P→U` : analytique, facile. `U→P` : **résolution non linéaire (Newton)** —
-historiquement LE point fragile des codes GRMHD (référence : Noble et al.
-2006). C'est ici que les codes échouent en pratique.
-*Test* : aller-retour `P→U→P` sur un large domaine (facteur de Lorentz
-élevé, forte magnétisation) avec récupération à la précision machine. Test
-unitaire pur, aucune simulation nécessaire.
+> ⚠️ **Piège méthodologique rencontré et corrigé (2026-08-25).** La version
+> initiale annonçait la compatibilité métrique `∇_λ g_μν = 0` comme « le vrai
+> test de la connexion ». C'est **faux** : en substituant la définition de Γ,
+> on obtient identiquement `∂_λ g_μν - ∂_λ g_μν = 0` — la relation est une
+> **tautologie algébrique**, vraie même avec des dérivées de métrique
+> complètement fausses. Elle ne détecte qu'une faute de transcription dans la
+> formule de Γ elle-même.
+>
+> Le symptôme qui a trahi le problème : le test rendait 8e-16 (précision
+> machine) là où la différentiation numérique impose un plancher ~1e-9.
+> **Un test meilleur que sa limite théorique ne teste pas ce qu'on croit.**
+> Conservé comme T3 (il garde une valeur : détection de faute de frappe dans
+> Γ), mais le test réel est désormais T8 (géodésiques), qui rend 1e-13…1e-11
+> — dominé par de vraies erreurs numériques, signature d'un test authentique.
+>
+> Règle générale à appliquer aux étapes suivantes : **se méfier d'un test qui
+> passe trop bien**, et vérifier algébriquement qu'il n'est pas satisfait par
+> construction.
 
-**S3 — Cœur hydro en RELATIVITÉ RESTREINTE d'abord (métrique plate)**
-Reconstruction PLM (limiteurs minmod/MC), solveur de Riemann HLL,
-intégrateur RK2/RK3 SSP.
-*Pourquoi SRMHD avant GRMHD* : isole le cœur numérique de la complexité GR.
-Si les chocs sont corrects en espace plat ET la métrique est correcte
-séparément (S1), la GR n'ajoute essentiellement que des termes sources.
-*Tests* : suite de tubes à choc SRMHD de Komissarov (solutions publiées).
+**S2 — Primitives ↔ conservées, HYDRO relativiste (sans champ B)**
+`P→U` analytique ; `U→P` par recherche de racine 1D — docile comparé au cas
+magnétisé.
+*Test* : aller-retour `P→U→P` sur un large domaine, **facteurs de Lorentz
+élevés** (pas de magnétisation ici : elle n'existe pas encore). Test
+unitaire pur, aucune simulation.
 
-**S4 — Termes sources GR → hydro GR (sans champ B)**
+**S3 — Solveur SRHD en espace plat + tubes à choc**
+Reconstruction PLM (minmod/MC), solveur de Riemann HLL, intégrateur RK2/RK3
+SSP. Hydro pur, métrique plate.
+*Tests* : problèmes de Riemann relativistes de **Martí & Müller 1994**
+(solution analytique exacte — PAS Komissarov, qui est magnétisé).
+⚠️ *Point d'architecture* : écrire le solveur **agnostique de la métrique**
+dès ici (l'espace plat = un choix de métrique parmi d'autres). Sinon les
+tests SRMHD de S5 exigeront un second chemin de code.
+⚠️ *Planchers* : des planchers de positivité minimaux (ρ, p > 0) apparaîtront
+naturellement dès ce stade dans les raréfactions fortes. C'est normal et
+inévitable — S6 reste la brique *systématique*, pas le premier plancher.
+
+**S4 — GRHD en Kerr-Schild (termes sources GR, toujours sans B)**
 *Tests décisifs* :
 - **Bondi/Michel** : accrétion sphérique stationnaire, **solution analytique
-  exacte**. Le flot doit rester stationnaire. C'est le test le plus
-  révélateur d'une erreur dans les termes sources ou la métrique.
-- **Tore de Fishbone-Moncrief sans champ B** : équilibre exact, doit rester
-  statique. Toute dérive = bug.
+  exacte**. Doit rester stationnaire. Test le plus révélateur d'une erreur
+  dans les termes sources ou la métrique.
+- **Tore de Fishbone-Moncrief sans champ B** : équilibre hydro exact, doit
+  rester statique. Toute dérive = bug.
 
-**S5 — Champ magnétique + transport contraint (CT)**
-FLUX-CT (Tóth 2000) pour maintenir `∇·B = 0`. Sans ça, la simulation
-diverge ou fabrique des monopôles magnétiques.
-*Test* : `∇·B` reste au niveau de la précision machine sur des milliers de
-pas. Invariant non négociable, à monitorer en permanence.
+**S5 — Ajout complet du magnétisme (SRMHD → GRMHD)**
+Quatre sous-briques distinctes :
+1. Variables GRMHD (ajout de `B^i` aux primitives, du terme de Maxwell au
+   tenseur énergie-impulsion).
+2. **Inversion magnétisée** `U→P` — la brique difficile (Noble et al. 2006).
+   *Test* : aller-retour à **forte magnétisation** ET facteur de Lorentz
+   élevé (c'est ici que ce test a sa place, pas en S2).
+3. Équation d'induction + **transport contraint** FLUX-CT (Tóth 2000).
+   *Test* : `∇·B` reste au niveau de la précision machine sur des milliers
+   de pas. Invariant non négociable, monitoré en permanence.
+4. *Tests d'ensemble* : suite de tubes à choc **SRMHD de Komissarov** (en
+   espace plat — gratuit si S3 est bien métrique-agnostique).
 
-**S6 — Planchers, plafonds, conditions aux limites**
+**S6 — Planchers, plafonds, conditions aux limites (traitement systématique)**
 Planchers de densité/énergie interne, plafond de magnétisation σ et de
 facteur de Lorentz ; sorties libres en r, axe polaire, périodicité en φ.
-Ce n'est pas de la physique mais c'est **indispensable** : sans planchers,
-NaN garantis dans la région du jet/funnel. Tous les codes du domaine en ont.
+Ce n'est pas de la physique mais c'est **indispensable** : sans ça, NaN
+garantis dans la région du jet/funnel. Tous les codes du domaine en ont.
+*Diagnostic* : compteurs d'activation des planchers — un plancher qui se
+déclenche massivement signale un problème physique en amont.
 
-**S7 — Première vraie run : tore MRI**
-Tore de Fishbone-Moncrief + boucle poloïdale faible → développement de la
-turbulence MRI.
+**S7 — Tore magnétisé + MRI, puis validation communautaire**
+Tore de Fishbone-Moncrief + boucle poloïdale faible → turbulence MRI.
 *Tests* :
 - **Taux de croissance linéaire de la MRI vs prédiction analytique**
   (quantitatif, pas visuel).
 - Puis métriques de **Porth et al. 2019** (comparaison de 9 codes :
   Athena++, BHAC, iharm3D, KORAL, H-AMR…) : taux d'accrétion, flux
-  magnétique à l'horizon, séries temporelles. C'est la référence
-  communautaire — le standard de validation le plus élevé accessible.
+  magnétique à l'horizon, séries temporelles. Standard de validation le plus
+  élevé accessible.
 
 ### ⚠️ 2D d'abord, mais 3D obligatoire à terme
 

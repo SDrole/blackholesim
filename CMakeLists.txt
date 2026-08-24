@@ -66,6 +66,26 @@ else()
   target_compile_options(blackholesim PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -ffast-math -mavx2 -mfma>)
 endif()
 
+# --- Solveur GRMHD (exécutable SÉPARÉ du ray tracer) -------------------------
+# Architecture volontairement découplée :
+#   grmhd_tests / solveur  ->  snapshots  ->  blackholesim (ray tracer)
+# Le solveur ne connaît pas le moteur de rendu et réciproquement : chacun est
+# validable indépendamment. Cf. docs/ROADMAP_5_AXES.md (axe 5).
+add_executable(grmhd_tests
+  grmhd/KerrSchild.cpp
+  grmhd/tests_s1.cpp
+)
+target_include_directories(grmhd_tests PRIVATE grmhd)
+set_target_properties(grmhd_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+  # PAS de /fp:fast ici : les tests de validation mesurent des écarts au
+  # niveau de la précision machine, les optimisations flottantes agressives
+  # fausseraient le verdict.
+  target_compile_options(grmhd_tests PRIVATE /W4 /EHsc)
+else()
+  target_compile_options(grmhd_tests PRIVATE -Wall -Wextra)
+endif()
+
 # Parallélisation du rendu CPU (OpenMP) — optionnelle.
 find_package(OpenMP QUIET)
 if(OpenMP_CXX_FOUND)
