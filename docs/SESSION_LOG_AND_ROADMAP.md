@@ -168,17 +168,26 @@ d'accord".
    NMSE ~0,01-0,05 par paramètre de Stokes.
 
 ### Plan de travail priorisé
-1. ✅ **FAIT** (2026-08-25) — Interface `PlasmaState` + backend procédural.
-   `src/Plasma.hpp` (nouveau), `Renderer::sampleProceduralPlasma()` dans
-   Renderer.cpp/hpp. `traceRay` route la densité à travers l'interface au
-   lieu d'appeler `diskDensity()` directement ; peuple aussi u^mu (orbite
-   képlérienne circulaire exacte, formules déjà existantes) et un champ B4
-   jouet (toroïdal, non utilisé par le pipeline avant l'étape 3-4). Vérifié
-   bit-identique : dérive de Carter inchangée (2,82929e-08) sur la config de
-   référence 480x270/AA=1/spin=0.9. Commit `875ccf7`. Fait entièrement en
-   local (CPU, Windows), aucun besoin du pod GPU — confirmé pour la suite :
-   l'étape 2 (synchrotron Stokes I) est aussi du C++/CUDA pur, pas besoin du
-   pod tant qu'on ne teste pas en conditions réelles sur A100.
+1. ✅ **FAIT** (2026-08-25) — Interface `PlasmaState` + backend procédural,
+   **CPU ET CUDA**.
+   - `src/Plasma.hpp` (nouveau) : struct POD partagée host/device.
+   - CPU : `Renderer::sampleProceduralPlasma()`, `traceRay` route la densité
+     à travers l'interface au lieu d'appeler `diskDensity()` directement.
+     Vérifié bit-identique (dérive de Carter 2,82929e-08 sur la config de
+     référence 480x270/AA=1/spin=0.9). Commit `875ccf7`.
+   - CUDA : `dev_sampleProceduralPlasma()`, miroir exact du CPU, `dev_traceRay`
+     branché dessus. Commit `d63e6ee`. **NON COMPILÉ** (pas de nvcc en local)
+     — à builder sur GPU avant de faire confiance, notamment l'espace
+     d'exécution du constructeur par défaut implicite de `PlasmaState`.
+   - Les deux backends peuplent aussi u^mu (orbite képlérienne circulaire
+     exacte, formules déjà existantes) et un champ B4 JOUET (toroïdal, non
+     utilisé par le pipeline avant les étapes 3-4).
+
+   ⚠️ **Leçon** : le premier passage n'avait fait que le CPU, laissant le
+   chemin GPU (celui des vrais rendus) hors de l'interface. Garder CPU et
+   CUDA structurellement parallèles n'est pas cosmétique — c'est exactement
+   la divergence CPU/CUDA qui a produit les DEUX bugs physiques de cette
+   session. À vérifier systématiquement pour chaque étape suivante.
 2. Module synchrotron (Pandya) en Stokes I seul, sur backend procédural.
 3. Module d'ingestion iharm HDF5 + backend GRMHD (source de snapshot à
    déterminer à ce moment : bibliothèque théorique EHT — accès en masse non
