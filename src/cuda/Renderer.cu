@@ -510,6 +510,42 @@ __device__ float dev_plasmaDensity(double r, double sinT, double cosT, double ph
     return vert * rad * fil;
 }
 
+// --- Backend procédural device de l'interface PlasmaState (cf. Plasma.hpp) ----
+// Miroir exact de Renderer::sampleProceduralPlasma() (CPU) : même interface,
+// même sémantique de validité (seuil 1e-4), mêmes formules d'orbite. Les deux
+// backends sont volontairement gardés structurellement parallèles — c'est la
+// divergence CPU/CUDA qui a produit les deux bugs physiques de cette session
+// (double comptage g⁴ côté CPU, calibration de luminance côté CUDA).
+//
+// PlasmaState est un POD à membres scalaires : son constructeur par défaut
+// implicite est utilisable en code device, la struct est donc partagée telle
+// quelle entre les deux backends (pas de duplication de définition).
+//
+// B4 est ici aussi un champ JOUET (toroïdal) — pas une sortie GRMHD réelle.
+__device__ PlasmaState dev_sampleProceduralPlasma(double r, double sinT, double cosT,
+                                                   double phi, const GpuParams& p) {
+    PlasmaState ps;
+    ps.rho = (double)dev_plasmaDensity(r, sinT, cosT, phi, p);
+    ps.valid = ps.rho > 1e-4;
+    if (!ps.valid) return ps;
+
+    const double Omega = dev_orbitalOmega(r, p.M, p.a);
+    const double ut    = dev_orbitalUt(r, p.M, p.a);
+    ps.u4[0] = ut;
+    ps.u4[1] = 0.0;
+    ps.u4[2] = 0.0;
+    ps.u4[3] = Omega * ut;
+
+    ps.B4[0] = 0.0;
+    ps.B4[1] = 0.0;
+    ps.B4[2] = 0.0;
+    ps.B4[3] = Omega * ut;   // toy field, même direction que le flot
+
+    ps.Theta_e = 0.0;        // non peuplé avant l'étape 2 (prescription R-beta)
+
+    return ps;
+}
+
 // =============================================================================
 //  Couleur : LUT de Planck, ciel procédural / texturé
 // =============================================================================
@@ -663,9 +699,10 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
             const double thm  = 0.5 * (y.theta + yNew.theta);
             const double phm  = 0.5 * (y.phi + yNew.phi);
             const double sinM = fmax(sin(thm), 1e-6), cosM = cos(thm);
-            const float dens  = dev_plasmaDensity(rm, sinM, cosM, phm, p);
+            const PlasmaState ps = dev_sampleProceduralPlasma(rm, sinM, cosM, phm, p);
 
-            if (dens > 1e-4f) {
+            if (ps.valid) {
+                const float dens = (float)ps.rho;
                 // Longueur géométrique du segment (pseudo-cartésien de Kerr).
                 const double3 c0 = dev_kerrCartesian(y.r, fmax(sin(y.theta), 1e-6),
                                                      cos(y.theta), y.phi, p.a);
