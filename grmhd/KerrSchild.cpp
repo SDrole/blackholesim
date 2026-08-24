@@ -22,28 +22,7 @@ void KerrSchild::metricCovariant(double r, double theta, double g[4][4]) const {
     // (pas physique). Les codes GRMHD décalent leur grille pour ne jamais
     // évaluer exactement sur l'axe ; ce plancher est une sécurité.
     const double st = std::max(std::fabs(std::sin(theta)), 1e-14);
-    const double s2 = st * st;
-
-    const double Sigma = r * r + a_ * a_ * ct * ct;
-    const double twoMrOverSigma = 2.0 * M_ * r / Sigma;
-
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j)
-            g[i][j] = 0.0;
-
-    g[0][0] = -(1.0 - twoMrOverSigma);
-    g[0][1] = twoMrOverSigma;
-    g[1][0] = g[0][1];
-    g[0][3] = -twoMrOverSigma * a_ * s2;
-    g[3][0] = g[0][3];
-
-    g[1][1] = 1.0 + twoMrOverSigma;
-    g[1][3] = -a_ * s2 * (1.0 + twoMrOverSigma);
-    g[3][1] = g[1][3];
-
-    g[2][2] = Sigma;
-
-    g[3][3] = s2 * (Sigma + a_ * a_ * s2 * (1.0 + twoMrOverSigma));
+    metricFromTrig<double>(r, st, ct, M_, a_, g);
 }
 
 double KerrSchild::sqrtNegGAnalytic(double r, double theta) const {
