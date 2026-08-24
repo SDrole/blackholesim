@@ -49,7 +49,7 @@ struct Config {
     // spectral : χ_λ = χ0 · (λref/λ)^diskOpacitySpectralIndex, λref = 546 nm
     // (vert). 0 = opacité grise (comportement précédent) ; la transmittance
     // devient un vecteur RGB, pas un scalaire (vrai transfert radiatif multi-bande).
-    double diskOpacitySpectralIndex = 1.5;
+    double diskOpacitySpectralIndex = 2.0;
 
     // --- Turbulence MHD anisotrope (cisaillement képlérien, GPU) ----------------
     // Un filament de plasma gelé dans le champ magnétique (théorème d'Alfvén) est
@@ -61,7 +61,7 @@ struct Config {
     // cohérence transverse est étiquetée par un label de flux poloïdal
     // ψ(r) ∝ r^diskFluxPower (forme standard d'un champ faible threading un
     // tore d'accrétion, cf. tores de Fishbone-Moncrief / De Villiers-Hawley).
-    double diskShearWindup = 2.5;       // "âge" de cisaillement pré-existant (tours orbitaux au pic)
+    double diskShearWindup = 4.0;       // "âge" de cisaillement pré-existant (tours orbitaux au pic)
     double diskShearGain   = 1.0;       // intensité du couplage cisaillement -> anisotropie
     double diskFluxPower   = 0.75;      // exposant du label de flux poloïdal ψ(r) ∝ r^diskFluxPower
 
@@ -130,10 +130,10 @@ struct Config {
     // supplémentaire, cf. Gralla & Lupsasca 2020), qu'une grille SxS régulière
     // rate presque toujours — on détecte les pixels à cheval sur une frontière
     // (fond/horizon/disque) et on les sur-échantillonne spécifiquement.
-    int    gpuMaxSteps        = 600000;  // budget de pas dédié au rendu GPU (RKF45 adaptatif)
+    int    gpuMaxSteps        = 1500000; // budget de pas dédié au rendu GPU (RKF45 adaptatif)
     double photonRingRadius   = 6.0;     // rayon (M) du corridor raffiné ; couvre r_ph pour a/M∈[0,1)
-    double photonRingStep     = 0.01;    // pas max imposé dans ce corridor
-    int    ringSupersample    = 4;       // sur-échantillonnage additionnel (ES×ES) sur les pixels de bord
+    double photonRingStep     = 0.005;   // pas max imposé dans ce corridor
+    int    ringSupersample    = 8;       // sur-échantillonnage additionnel (ES×ES) sur les pixels de bord
 
     // --- Vérification de la constante de Carter ---
     double carterTolerance = 1e-6;  // dérive max admissible de K le long du rayon
