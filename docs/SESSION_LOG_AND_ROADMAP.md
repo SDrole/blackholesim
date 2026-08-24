@@ -1,5 +1,14 @@
 # blackholesim — Journal de session & feuille de route
 
+> ⚠️ **PÉRIMÈTRE ÉLARGI le 2026-08-25** — la feuille de route active est
+> désormais **`docs/ROADMAP_5_AXES.md`** (5 axes explicites + solveur GRMHD
+> maison). Le présent document reste la référence pour l'historique de
+> session et l'audit d'architecture polarisation/ingestion, mais son plan
+> priorisé en §2 est **remplacé** par celui de ROADMAP_5_AXES.md.
+> Changement notable : le point GRMHD n'est plus « ingestion seule » mais
+> « solveur maison + ingestion comme format d'échange et référence de
+> validation ».
+
 Document de continuité : à relire en début de prochaine session pour reprendre le
 projet sans perdre le contexte. Couvre (1) ce qui a été fait, (2) l'audit
 d'architecture pour la suite (polarisation + GRMHD), (3) l'état courant.
