@@ -4,6 +4,7 @@
 #include "Metric.hpp"
 #include "Camera.hpp"
 #include "Image.hpp"
+#include "Plasma.hpp"
 #include "Vec3.hpp"
 
 namespace bhsim {
@@ -56,6 +57,14 @@ private:
     // enveloppe radiale (ISCO -> bord) × profil vertical gaussien (demi-épaisseur
     // H(r) = 0.05 r) × turbulence/bras spiraux. Nulle hors du tore du disque.
     double diskDensity(double r, double sinTheta, double cosTheta, double phi) const;
+
+    // Backend procédural de l'interface PlasmaState (cf. Plasma.hpp) : peuple
+    // rho (= diskDensity), la quadrivitesse d'orbite képlérienne circulaire
+    // (formules exactes déjà utilisées ailleurs dans le moteur — pas de
+    // nouvelle physique) et un champ B jouet. Point d'entrée unique que la
+    // boucle de tracé interroge — un futur backend GRMHD implémentera la même
+    // interface sans toucher au reste du pipeline.
+    PlasmaState sampleProceduralPlasma(double r, double sinTheta, double cosTheta, double phi) const;
 
     // Fonction source du transfert radiatif en (r, Lz) : corps noir de Page-Thorne
     // à la température perçue g·T_em, amplifié par le beaming bolométrique g⁴.
