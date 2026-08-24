@@ -86,6 +86,24 @@ else()
   target_compile_options(grmhd_tests PRIVATE -Wall -Wextra)
 endif()
 
+# Consolidation S1 : vérification du schéma de dérivation (pas complexe) et
+# validation croisée contre le moteur Boyer-Lindquist du ray tracer, utilisé
+# comme ORACLE INDÉPENDANT (déjà validé en production par la conservation de
+# Carter). D'où le lien avec src/Metric.cpp et src/Geodesic.cpp.
+add_executable(grmhd_s1_consolidation
+  grmhd/KerrSchild.cpp
+  grmhd/tests_s1_consolidation.cpp
+  src/Metric.cpp
+  src/Geodesic.cpp
+)
+target_include_directories(grmhd_s1_consolidation PRIVATE grmhd src)
+set_target_properties(grmhd_s1_consolidation PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+  target_compile_options(grmhd_s1_consolidation PRIVATE /W4 /EHsc)
+else()
+  target_compile_options(grmhd_s1_consolidation PRIVATE -Wall -Wextra)
+endif()
+
 # Parallélisation du rendu CPU (OpenMP) — optionnelle.
 find_package(OpenMP QUIET)
 if(OpenMP_CXX_FOUND)

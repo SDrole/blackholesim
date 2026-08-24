@@ -106,12 +106,57 @@ Privilégier Athena++/KHARMA/iharm3D si on veut adapter du code réel.
 > algorithmes différents, le second nettement plus dur (c'est celui de Noble et
 > al. 2006, là où les codes cassent réellement).
 
-**S0 ✅ FAIT + S1 ✅ FAIT (2026-08-25)** — `grmhd/` : `Grid.hpp`,
-`Coordinates.hpp` (MKS), `KerrSchild.hpp/.cpp`, `LinAlg.hpp`, `tests_s1.cpp`.
-Cible CMake séparée `grmhd_tests`. 15 tests passent (voir détail des pièges
-ci-dessous). Reste ouvert : backend HDF5 (différé en S3/S4, cf. note
-dépendance), et l'écriture d'état fluide (rien à écrire tant qu'il n'y a pas
-de fluide).
+**S0 ✅ FAIT + S1 ✅ FAIT & CONSOLIDÉ (2026-08-25)** — `grmhd/` : `Grid.hpp`,
+`Coordinates.hpp` (MKS), `KerrSchild.hpp/.cpp`, `LinAlg.hpp`, `tests_s1.cpp`,
+`tests_s1_consolidation.cpp`. Cibles CMake `grmhd_tests` et
+`grmhd_s1_consolidation`. Reste ouvert : backend HDF5 (contrainte ferme
+ci-dessus), écriture d'état fluide (rien à écrire tant qu'il n'y a pas de
+fluide).
+
+**Résultats de consolidation S1 — la géométrie est verrouillée :**
+
+*Bloc A — schéma de différentiation des Christoffels (validé contre un oracle
+indépendant : différentiation par PAS COMPLEXE `Im[f(x+ih)]/h`, exacte à la
+précision machine car sans soustraction donc sans annulation catastrophique).*
+- Différences centrées vs pas complexe : `∂_r g` 7,6e-11, `∂_θ g` 1,6e-10.
+- Balayage du pas `h` sur 10 décades : courbe en V classique, optimum
+  empirique à `h≈1e-4` (8,5e-12). Le `h=1e-6` de production est ~10× au-dessus
+  de l'optimum, donc **dans le plateau** — validé, pas sur un flanc.
+- **Proximité de l'axe polaire — contrainte de maillage découverte** :
+  `∂_θ g` se dégrade régulièrement près de l'axe (1,4e-9 à 1e-2 rad ;
+  1,7e-8 à 1e-3 ; 1,1e-6 à 1e-5) car les points `θ±h` finissent par franchir
+  l'axe, où `|sinθ|` réfléchit la fonction au lieu de la prolonger.
+  **Borne sûre MESURÉE : ≥ 1e-2 rad** (ma borne initiale de 1e-3 était
+  optimiste d'une décade — corrigée sur la donnée, pas en élargissant la
+  tolérance). Vérifié que le MKS la respecte largement : 1re cellule à
+  1,04e-2 rad même à n2=256. ⚠️ **À revérifier si on augmente la résolution
+  polaire au-delà de n2≈256, ou si on change `hslope`.**
+
+*Bloc B — validation croisée contre le ray tracer Boyer-Lindquist* (oracle
+INDÉPENDANT : formalisme hamiltonien canonique, code de production déjà
+validé par la conservation de Carter). `src/Metric.cpp` et `src/Geodesic.cpp`
+sont liés directement dans la cible de test.
+- Accord KS↔BL sur `(r, θ)` à λ=20 : **1,5e-12** sur 5 géodésiques
+  (spins 0 / 0,5 / 0,9 / 0,998 ; équatoriales et inclinées ; dont une proche
+  horizon). `r` et `θ` étant des coordonnées PARTAGÉES entre BL et KS, la
+  comparaison est directe — aucune transformation dans le test, donc aucun
+  risque d'erreur introduite par le test lui-même.
+- Invariants KS (E, Lz, nullité) : 4,6e-11. Carter côté BL : 3,4e-15.
+- **Convergence : ordre observé +4,04** dans le régime de troncature
+  (dl 0,8 → 0,4), puis dégradation vers le plancher ~1e-12 imposé par la
+  différentiation numérique des Christoffels. Conforme à RK4.
+
+> ⚠️ **Second piège méthodologique (même famille que la tautologie T3).** Le
+> test de convergence a d'abord été dimensionné à partir de dl=0,02 : l'écart
+> y valait déjà ~1e-12, c'est-à-dire le plancher numérique. Les « ordres »
+> mesurés oscillaient (+2,7 / −2,2 / +2,3) — **on mesurait du bruit d'arrondi
+> en croyant mesurer une convergence**. Corrigé en partant de pas nettement
+> plus grossiers et en n'évaluant l'ordre que sur les paires dont les deux
+> erreurs dépassent franchement le plancher.
+>
+> Règle à appliquer systématiquement : **un test de convergence n'est valide
+> que dans le régime où l'erreur de troncature domine** — il faut le vérifier
+> explicitement, pas le supposer.
 
 **S0 — Infrastructure & sortie**
 Répertoire `grmhd/`, cible CMake séparée, structures de grille, interface
@@ -119,8 +164,17 @@ d'écriture d'état. *Fait en premier volontairement* : pouvoir dumper et
 inspecter est l'outil de debug principal de tout ce qui suit.
 *Note dépendance* : HDF5 n'est pas installé en local (absent de winget ;
 conda est la voie). À S0-S1 il n'y a aucun état fluide à écrire — backend
-binaire/CSV sans dépendance d'abord, **backend HDF5 format iharm branché en
-S3/S4**, quand il y a réellement des données à échanger avec blackholesim.
+binaire/CSV sans dépendance d'abord.
+
+> 🔒 **CONTRAINTE FERME (décidée 2026-08-25)** — le writer **iharm HDF5 doit
+> être opérationnel au plus tard PENDANT S3**, avant qu'on accumule des états
+> fluides significatifs, et **obligatoirement avant de commencer S4**.
+> Raison : ne pas repousser cette dette technique au moment où le solveur
+> sera déjà complexe — changer de format de sortie sur un code mûr coûte
+> beaucoup plus cher, et sans écriture standard on ne peut ni inspecter
+> sérieusement, ni comparer aux codes de référence, ni alimenter
+> blackholesim. Cette contrainte prime sur toute tentation de « on verra à
+> S5 ».
 
 **S1 — Métrique & coordonnées (Kerr-Schild)**
 ⚠️ Différence importante avec l'existant : le ray tracer utilise

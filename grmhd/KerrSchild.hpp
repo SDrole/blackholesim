@@ -32,6 +32,41 @@ struct Metric4 {
     double sqrtNegG   = 0.0;  // √(-det g)
 };
 
+// Cœur de la métrique, templaté sur le type scalaire et paramétré par
+// (sinθ, cosθ) plutôt que par θ. Deux raisons :
+//   * le plancher sur |sinθ| (singularité de coordonnées sur l'axe) reste à
+//     la charge de l'appelant, ce qui garde ce cœur analytique pur ;
+//   * il devient instanciable en std::complex, ce qui permet la
+//     DIFFÉRENTIATION PAR PAS COMPLEXE  f'(x) ≈ Im[f(x+ih)]/h  — exacte à la
+//     précision machine (aucune soustraction, donc aucune annulation
+//     catastrophique), utilisée comme référence indépendante pour valider le
+//     schéma de différences finies des Christoffels.
+template <typename T>
+void metricFromTrig(const T& r, const T& st, const T& ct,
+                    const T& M, const T& a, T g[4][4]) {
+    const T s2 = st * st;
+    const T Sigma = r * r + a * a * ct * ct;
+    const T twoMrOverSigma = T(2.0) * M * r / Sigma;
+
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            g[i][j] = T(0.0);
+
+    g[0][0] = -(T(1.0) - twoMrOverSigma);
+    g[0][1] = twoMrOverSigma;
+    g[1][0] = g[0][1];
+    g[0][3] = -twoMrOverSigma * a * s2;
+    g[3][0] = g[0][3];
+
+    g[1][1] = T(1.0) + twoMrOverSigma;
+    g[1][3] = -a * s2 * (T(1.0) + twoMrOverSigma);
+    g[3][1] = g[1][3];
+
+    g[2][2] = Sigma;
+
+    g[3][3] = s2 * (Sigma + a * a * s2 * (T(1.0) + twoMrOverSigma));
+}
+
 class KerrSchild {
 public:
     KerrSchild(double M = 1.0, double a = 0.0) : M_(M), a_(a) {}
