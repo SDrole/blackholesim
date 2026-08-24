@@ -29,6 +29,7 @@
 // -----------------------------------------------------------------------------
 #include <cuda_runtime.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -70,6 +71,7 @@ struct GpuParams {
     double isco, diskOuter, diskShapeMax, diskTempScaleK, diskPeakR, diskGain;
     double diskExposure, diskOpacity;   // contraste volumétrique (exposition + opacité χ)
     double opacitySpectralIndex;        // χ_λ ∝ (λref/λ)^indice : auto-absorption chromatique
+    double planckNorm;                  // calibration luminance de dev_planckB (cf. commentaire)
 
     // Texture de plasma (fBm + bras spiraux) + anisotropie MHD (cisaillement képlérien).
     double noiseStrength, noiseFreq, noiseLacunarity, noiseGain;
@@ -384,8 +386,13 @@ __device__ __forceinline__ float dev_ntTemperature(float r, const GpuParams& p) 
 
 // --- Corps noir de Planck échantillonné en RVB (700 / 546 / 435 nm) -----------
 // B(λ,T) ∝ λ^{-5} / (exp(c2/(λT)) - 1), c2 = hc/k_B = 1.43877688e7 nm·K.
-// Référence verte (546 nm) pour garder des valeurs O(1) ; donne directement la
-// chromaticité du plasma (rougit à froid, blanchit-bleuit à chaud).
+// La référence verte (546 nm) ne donne PAS des valeurs O(1) en général — au pic
+// du disque (T ~ 7000 K), B(546,T) ~ 0.024, sous-exposant tout le rendu d'un
+// facteur ~40 par rapport à la LUT CPU (Planck ⊗ CIE 1931, normalisée à Y=1 au
+// pic). Fix : p.planckNorm = exp(c2/(546·diskTempScaleK)) - 1, précalculé côté
+// hôte, ramène B(546, diskTempScaleK) à exactement 1 — même convention que le
+// CPU (planckColor(diskTempScaleK) ≈ Y=1), pour un kDiskGain/diskExposure
+// cohérent entre les deux moteurs.
 __device__ __forceinline__ float dev_planckB(float lambda_nm, float T) {
     const float c2 = 1.43877688e7f;
     const float x  = c2 / (lambda_nm * fmaxf(T, 1.0f));
@@ -393,8 +400,11 @@ __device__ __forceinline__ float dev_planckB(float lambda_nm, float T) {
     const float l5 = __powf(546.0f / lambda_nm, 5.0f);
     return l5 / fmaxf(em, 1e-20f);
 }
-__device__ __forceinline__ float3 dev_planckRGB(float T) {
-    return make_float3(dev_planckB(700.0f, T), dev_planckB(546.0f, T), dev_planckB(435.0f, T));
+__device__ __forceinline__ float3 dev_planckRGB(float T, const GpuParams& p) {
+    const float norm = (float)p.planckNorm;
+    return make_float3(dev_planckB(700.0f, T) * norm,
+                        dev_planckB(546.0f, T) * norm,
+                        dev_planckB(435.0f, T) * norm);
 }
 
 // --- Opacité chromatique (auto-absorption synchrotron, approximation) ---------
@@ -673,7 +683,7 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
 
                 // Fonction source : Planck(T_obs) ⊗ beaming bolométrique g⁴.
                 const float g4 = g * g * g * g;
-                const float3 B = dev_planckRGB(Tobs);
+                const float3 B = dev_planckRGB(Tobs, p);
                 const float sScale = kSrc * g4;
                 const float3 S = make_float3(sScale * B.x, sScale * B.y, sScale * B.z);
 
@@ -852,6 +862,13 @@ RenderResult Renderer::renderGPU() const {
     p.isco = isco_;  p.diskOuter = cfg_.diskOuter;
     p.diskShapeMax = diskShapeMax_;  p.diskTempScaleK = cfg_.diskTempScaleK;
     p.diskPeakR = diskPeakR_;  p.diskGain = 5.0;   // kDiskGain (cf. Renderer.cpp)
+    // Calibration de dev_planckB : ramène B(546nm, diskTempScaleK) à 1, même
+    // convention de luminance que la LUT CPU (cf. commentaire de dev_planckRGB).
+    {
+        const double c2 = 1.43877688e7;
+        const double x = c2 / (546.0 * cfg_.diskTempScaleK);
+        p.planckNorm = std::exp(x) - 1.0;
+    }
     p.diskExposure = cfg_.diskExposure;  p.diskOpacity = cfg_.diskOpacity;
     p.opacitySpectralIndex = cfg_.diskOpacitySpectralIndex;
 
