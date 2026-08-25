@@ -74,26 +74,57 @@ double Solver1D::computeTimeStep() const {
     return cfg_.cfl * dx_ / maxSpeed;
 }
 
-void Solver1D::computeRHS(const std::vector<ConservedState>& cons,
-                          std::vector<std::array<double, 5>>& rhs) {
+// POINT UNIQUE d'application de la politique de recovery.
+// Toute conversion U→P du solveur passe par ici : il ne doit pas exister deux
+// implémentations du contrat susceptibles de diverger (c'est précisément ce
+// qui s'était produit — computeRHS repartait d'une primitive périmée même
+// sous la politique Abort, contournant le contrat annoncé).
+bool Solver1D::recoverWithPolicy(int cell, const ConservedState& U, const PrimitiveState& fallback,
+                                 PrimitiveState& out, RecoveryStatus& st,
+                                 bool& usedFallback) {
+    usedFallback = false;
+
+    // Injection de faute (tests uniquement). Placée ICI et nulle part ailleurs :
+    // une faute injectée doit emprunter exactement le même chemin de politique
+    // qu'un échec réel, sinon le test validerait un chemin qui n'existe pas.
+    const bool forced = (faultStage_ != 0 && faultStage_ == curStage_ && faultCell_ == cell);
+
+    const bool ok = forced ? false : conservedToPrimitive(U, eos_, out, st);
+    if (forced) st.failure = RecoveryFailure::NoConvergence;
+    if (st.coldAtMachinePrecision) ++counters_.coldAtMachinePrecision;
+    if (ok) return true;
+
+    ++counters_.recoveryFailures;
+    if (cfg_.recoveryPolicy == RecoveryFailurePolicy::Abort) return false;
+
+    // FallbackToPrevious UNIQUEMENT : réparation non conservative, assumée.
+    out = fallback;
+    usedFallback = true;
+    return true;
+}
+
+bool Solver1D::computeRHS(const std::vector<ConservedState>& cons,
+                          std::vector<std::array<double, 5>>& rhs, StepResult& res) {
     const int nTot = total();
 
     // 1) Primitives locales (les conservées font foi).
+    // On convertit TOUT avant de calculer le moindre flux : sous Abort, un
+    // échec interrompt ici, donc aucun flux ne peut être bâti sur un état
+    // non récupéré.
     static thread_local std::vector<PrimitiveState> P;
     static thread_local std::vector<FluidVars> FV;
     P.resize(nTot); FV.resize(nTot);
     for (int i = 0; i < nTot; ++i) {
         RecoveryStatus st;
         PrimitiveState p;
-        if (conservedToPrimitive(cons[i], eos_, p, st)) {
-            P[i] = p;
-        } else {
-            // On garde l'ancienne primitive comme secours ET on compte —
-            // jamais d'échec silencieux.
-            P[i] = prim_[i];
-            ++counters_.recoveryFailures;
+        bool usedFallback = false;
+        if (!recoverWithPolicy(i, cons[i], prim_[i], p, st, usedFallback)) {
+            res.ok = false;
+            res.failure = st.failure;
+            res.failedCell = i;
+            return false;
         }
-        if (st.coldAtMachinePrecision) ++counters_.coldAtMachinePrecision;
+        P[i] = p;
         FV[i] = makeFluidVars(P[i], eos_);
     }
 
@@ -171,33 +202,26 @@ void Solver1D::computeRHS(const std::vector<ConservedState>& cons,
     for (int i = NG; i < NG + cfg_.nx; ++i)
         for (int k = 0; k < 5; ++k)
             rhs[i][k] = -(faceFlux[i + 1][k] - faceFlux[i][k]) * invdx;
+    return true;
 }
 
-void Solver1D::recoverPrimitives(std::vector<ConservedState>& cons) {
+bool Solver1D::recoverPrimitives(std::vector<ConservedState>& cons, StepResult& res) {
     for (int i = NG; i < NG + cfg_.nx; ++i) {
         RecoveryStatus st;
         PrimitiveState p;
-        const bool ok = conservedToPrimitive(cons[i], eos_, p, st);
-
-        if (st.coldAtMachinePrecision) ++counters_.coldAtMachinePrecision;
-
         // `modified` trace si la primitive a été RÉELLEMENT changée par une
         // politique explicite. C'est la seule condition qui autorise à
-        // réécrire U (cf. contrat ci-dessous).
+        // réécrire U (contrat de conservation).
         bool modified = false;
+        bool usedFallback = false;
 
-        if (!ok) {
-            ++counters_.recoveryFailures;
-            if (cfg_.recoveryPolicy == RecoveryFailurePolicy::Abort) {
-                // Politique de validation : on N'INVENTE PAS d'état. Le pas est
-                // marqué en échec ; c'est au test de le constater plutôt que de
-                // lire un résultat issu d'une réparation.
-                ok_ = false;
-                continue;
-            }
-            p = prim_[i];        // réparation NON CONSERVATIVE, assumée et comptée
-            modified = true;
+        if (!recoverWithPolicy(i, cons[i], prim_[i], p, st, usedFallback)) {
+            res.ok = false;
+            res.failure = st.failure;
+            res.failedCell = i;
+            return false;               // Abort : on n'invente aucun état
         }
+        if (usedFallback) modified = true;   // réparation NON CONSERVATIVE
 
         // --- FLOORS : couche explicite, appliquée APRÈS le recovery ---------
         if (cfg_.floors.enabled) {
@@ -233,12 +257,21 @@ void Solver1D::recoverPrimitives(std::vector<ConservedState>& cons) {
             ++counters_.conservativeResyncs;
         }
     }
+    return true;
 }
 
-void Solver1D::step(double dt) {
+StepResult Solver1D::step(double dt) {
+    StepResult res;
     const int nTot = total();
     std::vector<std::array<double, 5>> rhs;
-    std::vector<ConservedState> u0 = cons_;
+
+    // INSTANTANÉ TRANSACTIONNEL : U et P au début du pas. En cas d'abandon,
+    // on restaure ce couple exact — un état à moitié avancé avec un `t_`
+    // inchangé ne correspondrait à aucun temps physique, et interdirait de
+    // réessayer avec un dt plus petit.
+    const std::vector<ConservedState> u0 = cons_;
+    const std::vector<PrimitiveState> p0 = prim_;
+    auto rollback = [&]() { cons_ = u0; prim_ = p0; };
 
     auto addRHS = [&](std::vector<ConservedState>& dst,
                       const std::vector<ConservedState>& src,
@@ -252,18 +285,20 @@ void Solver1D::step(double dt) {
         }
     };
 
-    // Étage 1
+    // --- Étage 1 -------------------------------------------------------------
+    curStage_ = 1;
     applyBoundaryConserved();
-    computeRHS(cons_, rhs);
+    if (!computeRHS(cons_, rhs, res)) { res.failedStage = 1; ok_ = false; rollback(); return res; }
     std::vector<ConservedState> u1 = cons_;
     addRHS(u1, u0, rhs, dt);
     cons_ = u1;
-    recoverPrimitives(cons_);
+    if (!recoverPrimitives(cons_, res)) { res.failedStage = 1; ok_ = false; rollback(); return res; }
     applyBoundaryPrimitives();
     applyBoundaryConserved();
 
-    // Étage 2 (moyenne SSP)
-    computeRHS(cons_, rhs);
+    // --- Étage 2 (moyenne SSP) -----------------------------------------------
+    curStage_ = 2;
+    if (!computeRHS(cons_, rhs, res)) { res.failedStage = 2; ok_ = false; rollback(); return res; }
     std::vector<ConservedState> u2 = cons_;
     addRHS(u2, cons_, rhs, dt);
     for (int i = NG; i < NG + cfg_.nx; ++i) {
@@ -273,12 +308,14 @@ void Solver1D::step(double dt) {
         cons_[i].S[2] = 0.5 * (u0[i].S[2] + u2[i].S[2]);
         cons_[i].tau  = 0.5 * (u0[i].tau  + u2[i].tau);
     }
-    recoverPrimitives(cons_);
+    if (!recoverPrimitives(cons_, res)) { res.failedStage = 2; ok_ = false; rollback(); return res; }
     applyBoundaryPrimitives();
     applyBoundaryConserved();
 
+    // Le temps n'avance QUE si le pas est allé au bout.
     t_ += dt;
     (void)nTot;
+    return res;
 }
 
 int Solver1D::advanceTo(double tEnd, int maxSteps) {
@@ -287,11 +324,11 @@ int Solver1D::advanceTo(double tEnd, int maxSteps) {
         double dt = computeTimeStep();
         if (t_ + dt > tEnd) dt = tEnd - t_;
         if (dt <= 0.0) break;
-        step(dt);
+        const StepResult r = step(dt);
+        // Un pas abandonné n'est PAS un pas : ni compté, ni suivi d'un autre.
+        // L'état et le temps sont restés ceux du début du pas (rollback).
+        if (!r.ok) break;
         ++n;
-        // Sous la politique Abort, on s'arrête net : poursuivre produirait un
-        // résultat d'apparence plausible bâti sur un état non récupéré.
-        if (!ok_) break;
     }
     return n;
 }

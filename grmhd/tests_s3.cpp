@@ -412,6 +412,202 @@ void testConservationContract() {
 }
 
 // =============================================================================
+//  D8/D9 — CHEMINS D'ÉCHEC DE RECOVERY, RÉELLEMENT FORCÉS
+// =============================================================================
+// Les tests précédents ont 0 échec de recovery : ils ne peuvent donc RIEN
+// prouver sur cette branche. On injecte ici un état conservé inadmissible
+// (|S| > E, rejeté par S2 avec EnergyBelowMomentum) pour exercer le contrat.
+//
+// DISCRIMINANCE — vérifiée empiriquement, pas postulée.
+// L'ancien comportement (pas de rollback ; `t_ += dt` malgré l'échec) a été
+// réintroduit temporairement et la suite relancée. Résultat mesuré :
+//   * D8c et D8g ÉCHOUENT  -> ils testent bien l'avance du temps ;
+//   * D8d PASSAIT QUAND MÊME -> il ne testait RIEN.
+// Raison : un état conservé inadmissible injecté avant le pas est rejeté dès
+// l'étage 1, donc AVANT que `cons_` n'ait été touché ; « l'état est intact »
+// est alors vrai par accident, rollback ou pas. Le rollback n'a d'effet
+// observable qu'à l'étage 2, quand `cons_` porte déjà la mise à jour de
+// l'étage 1 — état qu'on ne peut pas atteindre par injection d'état puisque
+// l'étage 1 le rejetterait. D'où D8h, qui injecte une FAUTE (et non un état)
+// à l'étage 2. D8d est conservé comme couverture du cas « échec précoce »,
+// mais son libellé dit explicitement qu'il ne teste pas le rollback.
+//
+// Mesures avec l'ancien comportement réintroduit :
+//   D8c, D8g          -> FAIL
+//   D8h2, D8h3, D8h4  -> FAIL, avec max|dU| = 7.889e-04, max|dP| = 7.850e-04
+// Avec le code courant : max|dU| = max|dP| = 0.000e+00 (égalité bit à bit).
+
+ConservedState inadmissibleState() {
+    // E = tau + D = 2, |S| = 100 >> E : aucune vitesse < c ne peut produire
+    // cet état. S2 le rejette pour EnergyBelowMomentum.
+    ConservedState U;
+    U.D = 1.0; U.tau = 1.0;
+    U.S[0] = 100.0; U.S[1] = 0.0; U.S[2] = 0.0;
+    return U;
+}
+
+Solver1DConfig failCfg(RecoveryFailurePolicy pol) {
+    Solver1DConfig cfg;
+    cfg.nx = 32; cfg.xmin = 0.0; cfg.xmax = 1.0;
+    cfg.cfl = 0.4; cfg.gamma = 5.0 / 3.0;
+    cfg.recon = Reconstruction::PLM_MC;
+    cfg.bc = BoundaryCondition::Periodic;
+    cfg.recoveryPolicy = pol;
+    return cfg;
+}
+
+void testForcedRecoveryFailureAbort() {
+    Solver1D s(failCfg(RecoveryFailurePolicy::Abort));
+    s.initialize([](double x) { return mkPrim(1.0 + 0.2 * std::sin(2.0 * M_PI * x), 1.0, 0.1); });
+
+    // Un pas sain d'abord, pour partir d'un état non trivial.
+    const double dt = 0.2 * s.dx();
+    const StepResult first = s.step(dt);
+    reportBool("D8a un pas sain reussit avant injection", first.ok && s.ok());
+
+    const double tBefore = s.time();
+    const int victim = Solver1D::NG + 7;
+    s.injectConservedForTest(victim, inadmissibleState());
+
+    // Photographie de TOUT l'état juste après injection.
+    const std::vector<ConservedState> snapshot = s.conserved();
+    const long long recFailBefore = s.counters().recoveryFailures;
+
+    const StepResult r = s.step(dt);
+
+    reportBool("D8b le pas est signale en echec", !r.ok && !s.ok());
+    reportBool("D8c le temps n'a PAS avance",
+               s.time() == tBefore);
+
+    // ROLLBACK : l'état entier doit être identique à l'instantané, y compris
+    // les cellules SAINES. Avec l'ancien code, le premier étage SSPRK2 les
+    // avait déjà modifiées -> ce test échouait.
+    bool identical = true;
+    const std::vector<ConservedState>& now = s.conserved();
+    for (size_t i = 0; i < snapshot.size(); ++i) {
+        if (now[i].D != snapshot[i].D || now[i].tau != snapshot[i].tau ||
+            now[i].S[0] != snapshot[i].S[0]) { identical = false; break; }
+    }
+    // ATTENTION : ce test n'est PAS discriminant (cf. en-tête de section) —
+    // l'échec survient à l'étage 1, avant toute mutation. Le rollback est testé
+    // par D8h.
+    reportBool("D8d etat intact (echec precoce, etage 1 -- NON discriminant)", identical);
+    reportBool("D8e l'echec est comptabilise",
+               s.counters().recoveryFailures > recFailBefore);
+    reportBool("D8f aucune resynchronisation non conservative sous Abort",
+               s.counters().conservativeResyncs == 0);
+    std::printf("       Abort : failure='%s' cellule=%d etage=%d | t inchange=%.17g\n",
+                toString(r.failure), r.failedCell, r.failedStage, s.time());
+
+    // advanceTo ne doit pas non plus « avaler » l'échec.
+    const double tBefore2 = s.time();
+    const int nsteps = s.advanceTo(s.time() + 10.0 * dt);
+    reportBool("D8g advanceTo s'arrete immediatement et n'avance pas le temps",
+               nsteps == 0 && s.time() == tBefore2);
+}
+
+// D8h — LE test du rollback. La faute est injectée à l'ÉTAGE 2, donc après que
+// l'étage 1 a déjà écrit dans TOUTES les cellules physiques. Sans rollback,
+// l'état observé après l'échec est l'état intermédiaire d'Euler — visiblement
+// différent de l'état initial.
+void testAbortRollbackAtStage2() {
+    Solver1D s(failCfg(RecoveryFailurePolicy::Abort));
+    s.initialize([](double x) { return mkPrim(1.0 + 0.2 * std::sin(2.0 * M_PI * x), 1.0, 0.1); });
+
+    const double dt = 0.2 * s.dx();
+    s.step(dt);   // un pas sain
+
+    const double tBefore = s.time();
+    const std::vector<ConservedState> before = s.conserved();
+    const std::vector<PrimitiveState> beforeP = s.primitives();
+
+    // Contrôle préalable : sans la faute, ce pas modifierait réellement l'état.
+    // Sans ce contrôle, « l'état est identique » pourrait être trivialement
+    // vrai parce que rien n'évolue.
+    {
+        Solver1D ref(failCfg(RecoveryFailurePolicy::Abort));
+        ref.initialize([](double x) { return mkPrim(1.0 + 0.2 * std::sin(2.0 * M_PI * x), 1.0, 0.1); });
+        ref.step(dt);
+        const std::vector<ConservedState> a = ref.conserved();
+        ref.step(dt);
+        const std::vector<ConservedState> b = ref.conserved();
+        double maxDiff = 0.0;
+        for (size_t i = 0; i < a.size(); ++i)
+            maxDiff = std::max(maxDiff, std::fabs(a[i].tau - b[i].tau));
+        reportBool("D8h0 controle : un pas sain modifie bien l'etat", maxDiff > 1e-12);
+    }
+
+    s.injectRecoveryFaultForTest(2, Solver1D::NG + 11);
+    const StepResult r = s.step(dt);
+
+    reportBool("D8h1 l'echec est bien detecte a l'ETAGE 2",
+               !r.ok && r.failedStage == 2 && r.failedCell == Solver1D::NG + 11);
+    reportBool("D8h2 le temps n'a pas avance", s.time() == tBefore);
+
+    // Comparaison bit à bit : le rollback restaure l'instantané exact, il ne
+    // « recalcule » pas un état voisin.
+    double maxDU = 0.0, maxDP = 0.0;
+    const std::vector<ConservedState>& nowU = s.conserved();
+    const std::vector<PrimitiveState>& nowP = s.primitives();
+    for (size_t i = 0; i < before.size(); ++i) {
+        maxDU = std::max(maxDU, std::fabs(nowU[i].D   - before[i].D));
+        maxDU = std::max(maxDU, std::fabs(nowU[i].tau - before[i].tau));
+        maxDU = std::max(maxDU, std::fabs(nowU[i].S[0] - before[i].S[0]));
+        maxDP = std::max(maxDP, std::fabs(nowP[i].rho - beforeP[i].rho));
+        maxDP = std::max(maxDP, std::fabs(nowP[i].u   - beforeP[i].u));
+    }
+    reportBool("D8h3 U restaure a l'identique (bit a bit)", maxDU == 0.0);
+    reportBool("D8h4 P restaure a l'identique (bit a bit)", maxDP == 0.0);
+    std::printf("       Rollback etage 2 : max|dU|=%.3e  max|dP|=%.3e  t inchange=%.17g\n",
+                maxDU, maxDP, s.time());
+}
+
+void testForcedRecoveryFailureFallback() {
+    Solver1D s(failCfg(RecoveryFailurePolicy::FallbackToPrevious));
+    s.initialize([](double x) { return mkPrim(1.0 + 0.2 * std::sin(2.0 * M_PI * x), 1.0, 0.1); });
+
+    const double dt = 0.2 * s.dx();
+    s.step(dt);
+    const double tBefore = s.time();
+    s.injectConservedForTest(Solver1D::NG + 7, inadmissibleState());
+
+    const StepResult r = s.step(dt);
+
+    reportBool("D9a sous Fallback, le pas se poursuit", r.ok && s.ok());
+    reportBool("D9b le temps a avance", s.time() > tBefore);
+    reportBool("D9c l'echec est compte", s.counters().recoveryFailures > 0);
+    reportBool("D9d la non-conservation est comptabilisee",
+               s.counters().conservativeResyncs > 0);
+    std::printf("       Fallback : recoveryFailures=%lld  conservativeResyncs=%lld  t=%.6g\n",
+                s.counters().recoveryFailures, s.counters().conservativeResyncs, s.time());
+}
+
+// D10 — une réinitialisation doit rendre l'objet réellement neuf.
+void testReinitializationClearsState() {
+    Solver1D s(failCfg(RecoveryFailurePolicy::Abort));
+    s.initialize([](double x) { return mkPrim(1.0, 1.0, 0.1 * std::sin(x)); });
+    s.injectConservedForTest(Solver1D::NG + 3, inadmissibleState());
+    s.step(0.2 * s.dx());
+    const bool brokenBefore = !s.ok() && s.counters().recoveryFailures > 0;
+
+    // Nouvelle initialisation du MÊME objet.
+    s.initialize([](double x) { return mkPrim(1.0 + 0.1 * std::sin(2.0 * M_PI * x), 1.0, 0.05); });
+
+    reportBool("D10a le solveur etait bien en echec avant reinitialisation", brokenBefore);
+    reportBool("D10b initialize() remet ok_ a vrai", s.ok());
+    reportBool("D10c initialize() remet les compteurs a zero",
+               s.counters().recoveryFailures == 0
+               && s.counters().totalFloors() == 0
+               && s.counters().conservativeResyncs == 0
+               && s.counters().reconstructionFallbacks == 0
+               && s.counters().coldAtMachinePrecision == 0);
+    reportBool("D10d initialize() remet le temps a zero", s.time() == 0.0);
+    // Et le solveur doit repartir normalement.
+    const StepResult r = s.step(0.2 * s.dx());
+    reportBool("D10e le solveur reinitialise avance normalement", r.ok && s.ok());
+}
+
+// =============================================================================
 //  E — CONVERGENCE SUR SOLUTION LISSE (avant les chocs)
 // =============================================================================
 // Advection d'une perturbation de densite faible sur fond uniforme : la
@@ -864,6 +1060,11 @@ int main() {
     std::printf("\n  D -- conservation globale discrete et contrat sur U\n");
     testGlobalConservation();
     testConservationContract();
+    std::printf("\n  D8/D9/D10 -- chemins d'echec REELLEMENT forces\n");
+    testForcedRecoveryFailureAbort();
+    testAbortRollbackAtStage2();
+    testForcedRecoveryFailureFallback();
+    testReinitializationClearsState();
     std::printf("\n  E -- convergence sur solution LISSE\n");
     testSmoothConvergence();
     std::printf("\n  F -- tubes a choc vs oracle de Riemann EXACT\n");

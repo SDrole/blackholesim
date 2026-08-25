@@ -440,6 +440,55 @@ valeurs publiées de MM1/MM2 confirme la correction.
    choc : **0** partout — le chiffre vient de l'instrumentation, pas d'une
    affirmation.
 
+*Corrections post-peer-review du commit `111f8c6`* (contrat `Abort`) :
+La revue a relevé que la politique `Abort` **ne tenait pas son contrat**. Vérifié
+sur le code : (a) `step()` posait `ok_ = false` mais poursuivait jusqu'au second
+étage SSPRK2 et exécutait `t_ += dt` ; (b) `computeRHS()` n'appliquait pas du
+tout la politique — il repartait de `prim_[i]`, une primitive **périmée**, donc
+bâtissait des flux sur un état non récupéré, exactement ce que `Abort` prétend
+interdire ; (c) `initialize()` ne remettait à zéro ni `ok_` ni les compteurs,
+si bien qu'un solveur ayant échoué contaminait le test suivant.
+
+Corrections :
+1. **Point unique de politique** : `recoverWithPolicy()`. Toute conversion U→P
+   du solveur y passe — il ne peut plus exister deux variantes du contrat.
+2. **Étape transactionnelle**. `step()` photographie `(U, P)` en entrée et
+   **restaure ce couple exact** en cas d'abandon. Le rollback plutôt qu'un état
+   à moitié avancé, pour trois raisons : un état partiellement mis à jour avec
+   `t_` inchangé ne correspond à aucun temps physique ; le rollback rend
+   possible la réponse standard (réessayer avec un `dt` plus petit) ; c'est la
+   sémantique même d'« Abort » — le pas a eu lieu, ou pas.
+3. **`StepResult` retourné** (`ok`, `failure`, `failedCell`, `failedStage`) :
+   l'appelant décide sans inspecter l'état interne.
+4. **`initialize()` remet à neuf** `t_`, `ok_` et les compteurs.
+5. **Conversion complète avant tout flux** dans `computeRHS()` : sous `Abort`,
+   l'échec interrompt avant qu'un seul flux ne soit construit.
+
+*Discriminance des nouveaux tests — mesurée, pas postulée.* L'ancien
+comportement a été **réintroduit temporairement** et la suite relancée :
+- `D8c`, `D8g` (avance du temps) → **FAIL**, comme attendu.
+- `D8d` (« état restauré ») → **passait quand même**. Il ne testait rien : un
+  état conservé inadmissible injecté avant le pas est rejeté dès l'étage 1,
+  donc **avant** toute mutation de `cons_` ; « l'état est intact » y est vrai
+  par accident. Le test a été renommé pour dire ce qu'il couvre réellement
+  (échec précoce) et **ne plus prétendre** tester le rollback.
+- D'où **`D8h`**, qui injecte une **faute** (et non un état) à l'**étage 2**,
+  seul endroit où le rollback a un effet observable — l'étage 1 ayant déjà
+  écrit dans toutes les cellules physiques. Cet état est inatteignable par
+  injection d'état, puisque l'étage 1 le rejetterait : d'où une couture de
+  test explicite `injectRecoveryFaultForTest(stage, cell)`, passant par le
+  **même** chemin de politique qu'un échec réel. `D8h` inclut un
+  contre-contrôle (`D8h0`) prouvant qu'un pas sain modifie bien l'état, sans
+  quoi « état identique » serait trivialement vrai.
+  Mesures : ancien code `max|dU| = 7.889e-04`, `max|dP| = 7.850e-04` → **FAIL** ;
+  code courant `max|dU| = max|dP| = 0.000e+00` (égalité **bit à bit**).
+
+*Résultat des chemins d'échec forcés* : `Abort` → pas signalé en échec, cause
+`E ≤ |S|`, cellule et étage rapportés, `t` inchangé, **0** resynchronisation
+non conservative, `advanceTo` renvoie **0 pas**. `FallbackToPrevious` → le pas
+se poursuit, `recoveryFailures = 3` et `conservativeResyncs = 2` **comptés**,
+jamais silencieux.
+
 *Faiblesses assumées et documentées* :
 - HLLE est **diffusif sur les discontinuités de contact** (pas d'onde
   intermédiaire) — visible sur les tubes à choc, choix délibéré de baseline.
