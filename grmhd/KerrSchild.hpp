@@ -74,7 +74,18 @@ public:
     double mass() const { return M_; }
     double spin() const { return a_; }
 
+    // DOMAINE ADMIS : M > 0 et |a| <= M. Le cas extrémal |a| = M est ADMIS
+    // (r+ = r- = M) ; |a| > M est une singularité nue, donc REJETÉ.
+    bool parametersValid() const;
+
     // Rayons des horizons : r± = M ± √(M² - a²).
+    // Renvoie false hors domaine, plutôt que de renvoyer silencieusement le
+    // cas extrémal pour une singularité nue. Forme à préférer.
+    bool horizons(double& rPlus, double& rMinus) const;
+
+    // Formes commodes. Hors domaine elles renvoient NaN — un sentinel qui se
+    // propage et casse toute comparaison, au lieu d'une valeur plausible.
+    // Vérifier parametersValid() en amont reste la bonne pratique.
     double horizonOuter() const;
     double horizonInner() const;
 
@@ -98,7 +109,11 @@ public:
     //   Γ^λ_μν = ½ g^λσ (∂_μ g_σν + ∂_ν g_σμ - ∂_σ g_μν)
     // Kerr en KS est stationnaire et axisymétrique : ∂_t g = ∂_φ g = 0,
     // seules les dérivées ∂_r et ∂_θ sont non nulles.
-    void christoffel(double r, double theta, double Gamma[4][4][4]) const;
+    // Renvoie FALSE si la métrique n'a pas pu être inversée en (r, θ) ; Γ est
+    // alors mis à zéro mais l'appelant DOIT tester le retour. Un Γ = 0 silencieux
+    // est de l'espace plat : en S4 il alimenterait les termes source GRHD et
+    // produirait une évolution plausible et fausse.
+    [[nodiscard]] bool christoffel(double r, double theta, double Gamma[4][4][4]) const;
 
     // Dérivées ∂_λ g_μν (numériques). Exposé pour le test de compatibilité
     // métrique ∇_λ g_μν = 0.

@@ -3,17 +3,43 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace grmhd {
 
-double KerrSchild::horizonOuter() const {
+bool KerrSchild::parametersValid() const {
+    // DOMAINE DE KERR ADMIS : M > 0 et |a| <= M.
+    //  * M <= 0 n'est pas un trou noir.
+    //  * |a| > M est une SINGULARITÉ NUE : plus d'horizon, M² - a² < 0. Le
+    //    clamp `d > 0 ? d : 0` transformait silencieusement ce cas en cas
+    //    extrémal, c'est-à-dire retournait un horizon qui n'existe pas.
+    //  * |a| = M (extrémal) est ADMIS et non dégénéré ici : d = 0 exactement,
+    //    r+ = r- = M. C'est une limite physique légitime, on ne la rejette pas.
+    if (!std::isfinite(M_) || !std::isfinite(a_)) return false;
+    if (!(M_ > 0.0)) return false;
+    return std::fabs(a_) <= M_;
+}
+
+bool KerrSchild::horizons(double& rPlus, double& rMinus) const {
+    if (!parametersValid()) { rPlus = rMinus = 0.0; return false; }
     const double d = M_ * M_ - a_ * a_;
-    return M_ + std::sqrt(d > 0.0 ? d : 0.0);
+    // d >= 0 est ici GARANTI par parametersValid() : le max(...,0) ne corrige
+    // plus une entrée invalide, il n'absorbe qu'un -0.0 d'arrondi au cas
+    // extrémal exact.
+    const double s = std::sqrt(std::max(d, 0.0));
+    rPlus  = M_ + s;
+    rMinus = M_ - s;
+    return true;
+}
+
+double KerrSchild::horizonOuter() const {
+    double rp = 0.0, rm = 0.0;
+    return horizons(rp, rm) ? rp : std::numeric_limits<double>::quiet_NaN();
 }
 
 double KerrSchild::horizonInner() const {
-    const double d = M_ * M_ - a_ * a_;
-    return M_ - std::sqrt(d > 0.0 ? d : 0.0);
+    double rp = 0.0, rm = 0.0;
+    return horizons(rp, rm) ? rm : std::numeric_limits<double>::quiet_NaN();
 }
 
 void KerrSchild::metricCovariant(double r, double theta, double g[4][4]) const {
@@ -70,14 +96,19 @@ void KerrSchild::metricDerivatives(double r, double theta, double dg[4][4][4]) c
             dg[2][i][j] = (gp[i][j] - gm[i][j]) / (2.0 * ht);
 }
 
-void KerrSchild::christoffel(double r, double theta, double Gamma[4][4][4]) const {
+bool KerrSchild::christoffel(double r, double theta, double Gamma[4][4][4]) const {
     Metric4 m;
     if (!metricAt(r, theta, m)) {
+        // Γ = 0 est REMPLI puis SIGNALÉ. Le remplissage évite de laisser au
+        // sortant des octets non initialisés ; le `false` est le vrai contrat.
+        // Ne pas le signaler serait dangereux en S4 : Γ alimentera les termes
+        // source GRHD, et Γ = 0 (espace plat) produirait une évolution
+        // plausible mais fausse, sans aucun symptôme.
         for (int l = 0; l < 4; ++l)
             for (int i = 0; i < 4; ++i)
                 for (int j = 0; j < 4; ++j)
                     Gamma[l][i][j] = 0.0;
-        return;
+        return false;
     }
 
     double dg[4][4][4];
@@ -96,6 +127,7 @@ void KerrSchild::christoffel(double r, double theta, double Gamma[4][4][4]) cons
             }
         }
     }
+    return true;
 }
 
 }  // namespace grmhd

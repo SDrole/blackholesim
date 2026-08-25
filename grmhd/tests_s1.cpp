@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
+#include <limits>
 
 using namespace grmhd;
 
@@ -103,7 +104,7 @@ void testMetricCompatibility() {
         if (!ks.metricAt(p.r, p.theta, m)) { worst = 1.0; continue; }
         double dg[4][4][4], G[4][4][4];
         ks.metricDerivatives(p.r, p.theta, dg);
-        ks.christoffel(p.r, p.theta, G);
+        if (!ks.christoffel(p.r, p.theta, G)) { worst = 1.0; continue; }
 
         double scale = 0.0;
         for (int i = 0; i < 4; ++i)
@@ -137,7 +138,7 @@ void testChristoffelSymmetry() {
     for (const auto& p : samplePoints()) {
         KerrSchild ks(1.0, p.a);
         double G[4][4][4];
-        ks.christoffel(p.r, p.theta, G);
+        if (!ks.christoffel(p.r, p.theta, G)) { worst = 1.0; continue; }
         for (int l = 0; l < 4; ++l)
             for (int mu = 0; mu < 4; ++mu)
                 for (int nu = 0; nu < 4; ++nu)
@@ -314,10 +315,14 @@ void testGeodesicConservation() {
         const double nullScale = std::max(pScale * pScale, 1e-30);
 
         // RK4 sur (x, p).
+        // Un echec de christoffel() doit INTERROMPRE l'integration : integrer
+        // avec Gamma = 0 donnerait une droite d'espace plat, donc des invariants
+        // parfaitement conserves -- un test qui passerait pour la mauvaise raison.
+        bool gammaOk = true;
         auto rhs = [&](const double xx[4], const double pp[4],
                        double dx[4], double dp[4]) {
             double G[4][4][4];
-            ks.christoffel(xx[1], xx[2], G);
+            if (!ks.christoffel(xx[1], xx[2], G)) gammaOk = false;
             for (int i = 0; i < 4; ++i) dx[i] = pp[i];
             for (int l = 0; l < 4; ++l) {
                 double acc = 0.0;
@@ -333,6 +338,7 @@ void testGeodesicConservation() {
         for (int step = 0; step < nsteps; ++step) {
             // Arrêt si le rayon plonge trop près de la singularité ou s'évade.
             if (x[1] < 0.5 || x[1] > 200.0) break;
+            if (!gammaOk) { worstE = worstL = worstNull = 1e30; break; }
 
             double k1x[4], k1p[4], k2x[4], k2p[4], k3x[4], k3p[4], k4x[4], k4p[4];
             double tx[4], tp[4];
@@ -394,6 +400,142 @@ void testGrid() {
     std::printf("       (r_interne = %.4f, r+ = %.4f  -> frontiere DANS l'horizon)\n", r0, rp);
 }
 
+// =============================================================================
+// DURCISSEMENT PRE-S4
+// =============================================================================
+
+void reportBool(const char* name, bool ok, const char* detail = "") {
+    std::printf("  [%s] %-46s %s\n", ok ? "OK  " : "FAIL", name, detail);
+    if (!ok) ++g_failures;
+}
+
+// --- H1 : christoffel() signale son echec ------------------------------------
+// AVANT : christoffel() remplissait Gamma de zeros et retournait void. Un
+// appelant ne pouvait pas distinguer « espace plat » d'« inversion impossible ».
+// En S4 ce Gamma alimentera les termes source GRHD : Gamma = 0 produirait une
+// evolution parfaitement plausible et fausse, sans aucun symptome.
+void testChristoffelFailureContract() {
+    std::printf("\n  H1 -- contrat d'echec de christoffel()\n");
+    KerrSchild ks(1.0, 0.9);
+
+    // (a) Point valide : le resultat doit etre INCHANGE (non-regression).
+    double G[4][4][4];
+    const bool okValid = ks.christoffel(6.0, kPi / 3.0, G);
+    double maxG = 0.0;
+    for (int l = 0; l < 4; ++l)
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j)
+                maxG = std::max(maxG, std::fabs(G[l][i][j]));
+    reportBool("H1a point KS valide -> succes", okValid);
+    reportBool("H1b Gamma non trivial en point valide", maxG > 1e-6);
+
+    // (b) Entrees volontairement singulieres/invalides.
+    // r=0, theta=pi/2 : Sigma = r^2 + a^2 cos^2(theta) = 0 -> singularite
+    // annulaire, la metrique n'est pas inversible.
+    struct Bad { const char* label; double r, th; };
+    const Bad bad[] = {
+        {"singularite annulaire (r=0, th=pi/2)", 0.0, kPi / 2.0},
+        {"r non fini (NaN)",  std::numeric_limits<double>::quiet_NaN(), 1.0},
+        {"r infini",          std::numeric_limits<double>::infinity(),  1.0},
+    };
+    bool allDetected = true, allZeroed = true;
+    for (const Bad& b : bad) {
+        double Gb[4][4][4];
+        for (int l = 0; l < 4; ++l)
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4; ++j) Gb[l][i][j] = 12345.0;   // sentinelle
+        const bool ok = ks.christoffel(b.r, b.th, Gb);
+        if (ok) {
+            // Tolere : si l'inversion REUSSIT, le contrat n'est pas viole --
+            // mais alors Gamma doit etre fini, pas du bruit.
+            for (int l = 0; l < 4; ++l)
+                for (int i = 0; i < 4; ++i)
+                    for (int j = 0; j < 4; ++j)
+                        if (!std::isfinite(Gb[l][i][j])) allDetected = false;
+            std::printf("       (%s : inversion reussie, Gamma fini)\n", b.label);
+        } else {
+            for (int l = 0; l < 4; ++l)
+                for (int i = 0; i < 4; ++i)
+                    for (int j = 0; j < 4; ++j)
+                        if (Gb[l][i][j] != 0.0) allZeroed = false;
+            std::printf("       (%s : ECHEC signale)\n", b.label);
+        }
+    }
+    reportBool("H1c aucune entree invalide ne renvoie du bruit fini", allDetected);
+    reportBool("H1d Gamma remis a zero quand l'echec est signale", allZeroed);
+
+    // (c) DISCRIMINANCE : avec l'ancien contrat (void), il etait IMPOSSIBLE
+    // d'ecrire H1c/H1d. Ce test-ci verifie que le canal d'echec existe vraiment,
+    // c'est-a-dire qu'au moins une entree du domaine le declenche.
+    double Gs[4][4][4];
+    const bool sing = ks.christoffel(0.0, kPi / 2.0, Gs);
+    reportBool("H1e le chemin d'echec est REELLEMENT atteignable", !sing);
+}
+
+// --- H2 : domaine de validite des parametres de Kerr -------------------------
+void testKerrParameterDomain() {
+    std::printf("\n  H2 -- domaine des parametres de Kerr\n");
+
+    // Cas ADMIS.
+    struct Good { const char* label; double M, a; };
+    const Good good[] = {
+        {"Schwarzschild a=0",   1.0, 0.0},
+        {"sous-extremal a=0.9", 1.0, 0.9},
+        {"EXTREMAL a=M",        1.0, 1.0},
+        {"EXTREMAL a=-M",       1.0, -1.0},
+        {"masse != 1",          3.0, 2.4},
+    };
+    bool allGood = true, extremalOk = true;
+    for (const Good& g : good) {
+        KerrSchild ks(g.M, g.a);
+        double rp = 0.0, rm = 0.0;
+        const bool ok = ks.horizons(rp, rm);
+        if (!ok || !ks.parametersValid()) allGood = false;
+        // Verification analytique : r+ + r- = 2M et r+ * r- = a^2.
+        if (ok) {
+            if (std::fabs(rp + rm - 2.0 * g.M) > 1e-14 * g.M) allGood = false;
+            if (std::fabs(rp * rm - g.a * g.a) > 1e-13 * std::max(g.a * g.a, 1.0)) allGood = false;
+        }
+    }
+    reportBool("H2a cas admis acceptes (r+ + r- = 2M, r+ r- = a^2)", allGood);
+
+    // Le cas extremal doit rester SUPPORTE et donner r+ = r- = M exactement.
+    {
+        KerrSchild ks(1.0, 1.0);
+        double rp = 0.0, rm = 0.0;
+        const bool ok = ks.horizons(rp, rm);
+        extremalOk = ok && (rp == 1.0) && (rm == 1.0);
+        std::printf("       (extremal a=M : r+ = %.17g, r- = %.17g)\n", rp, rm);
+    }
+    reportBool("H2b cas extremal |a|=M supporte, r+ = r- = M", extremalOk);
+
+    // Cas REJETES.
+    struct Bad { const char* label; double M, a; };
+    const Bad bad[] = {
+        {"singularite nue a>M",  1.0,  1.5},
+        {"singularite nue a<-M", 1.0, -1.5},
+        {"M = 0",                0.0,  0.0},
+        {"M < 0",               -1.0,  0.0},
+        {"M non fini",           std::numeric_limits<double>::quiet_NaN(), 0.0},
+    };
+    bool allRejected = true, allNaN = true;
+    for (const Bad& b : bad) {
+        KerrSchild ks(b.M, b.a);
+        double rp = 0.0, rm = 0.0;
+        if (ks.parametersValid() || ks.horizons(rp, rm)) {
+            allRejected = false;
+            std::printf("       (%s : ACCEPTE A TORT)\n", b.label);
+        }
+        // Les formes commodes doivent renvoyer NaN, pas une valeur plausible.
+        if (!std::isnan(ks.horizonOuter()) || !std::isnan(ks.horizonInner()))
+            allNaN = false;
+    }
+    reportBool("H2c M<=0 ou |a|>M rejetes explicitement", allRejected);
+    // DISCRIMINANT : avec l'ancien clamp `d > 0 ? d : 0`, a=1.5 renvoyait
+    // silencieusement r+ = M = 1 -- un horizon qui n'existe pas.
+    reportBool("H2d hors domaine -> NaN, pas un horizon plausible", allNaN);
+}
+
 }  // namespace
 
 int main() {
@@ -410,6 +552,8 @@ int main() {
     testGeodesicConservation();
     testCoordinates();
     testGrid();
+    testChristoffelFailureContract();
+    testKerrParameterDomain();
 
     std::printf("---------------------------------------------------------------------\n");
     if (g_failures == 0) {

@@ -489,6 +489,116 @@ non conservative, `advanceTo` renvoie **0 pas**. `FallbackToPrevious` → le pas
 se poursuit, `recoveryFailures = 3` et `conservativeResyncs = 2` **comptés**,
 jamais silencieux.
 
+---
+
+### Passe de durcissement pré-S4 (après red-team Fable 5 sur `88d492e`)
+
+**1. `KerrSchild::christoffel()` — échec silencieux (BLOCKER pré-S4).**
+La fonction remplissait Γ de zéros et retournait `void` : l'appelant ne pouvait
+pas distinguer « espace plat » d'« inversion impossible ». Inoffensif en S1 (Γ
+n'y sert qu'à des tests), **dangereux en S4** où Γ alimentera les termes source
+GRHD — Γ = 0 y produirait une évolution plausible et fausse, sans symptôme.
+Signature devenue `[[nodiscard]] bool`, les 5 call sites audités et corrigés.
+Dans les deux intégrateurs géodésiques, un échec **interrompt** l'intégration :
+poursuivre avec Γ = 0 donnerait une droite d'espace plat, donc des invariants
+parfaitement conservés — un test qui passerait pour la mauvaise raison.
+Tests H1a–H1e : point valide inchangé ; singularité annulaire (r=0, θ=π/2),
+r = NaN et r = ∞ → **échec signalé** ; Γ remis à zéro ; chemin d'échec prouvé
+atteignable.
+
+**2. Sémantique des diagnostics — deux significations, jamais mélangées.**
+`step()` restaurait U et P mais pas `FloorCounters`. Décision : les compteurs
+décrivent l'**évolution acceptée**, donc ils font partie de la transaction et
+sont restaurés avec l'état — c'est la seule sémantique qui rende vérifiable une
+assertion du type « 0 floor sur ce problème ». L'information n'est pas perdue :
+elle part dans `rejectedTelemetry()`, **jamais annulée**, qui répond à « pourquoi
+ce pas a-t-il échoué ? ». Les deux ensembles sont disjoints par construction.
+Test D11 (faute à l'étage 2 **après** un floor réel à l'étage 1) — avec un
+contre-contrôle prouvant que l'injection produit bien ce floor.
+*Première version du test défectueuse* : après un pas sain, toutes les densités
+étaient déjà plafonnées, donc aucun floor ne se déclenchait plus au pas rejeté ;
+le contrôle vérifiait le mauvais pas. Corrigé par injection explicite d'une
+cellule de faible densité. Discriminance mesurée : sans restauration des
+compteurs, **D8e2 et D11e échouent**.
+
+**3. Domaine de l'oracle de Riemann — deux défauts, dont un non signalé.**
+
+*(a) Formation de vide (signalé).* Critère exact dérivé de l'invariant de Riemann
+déjà utilisé par la branche détente, donc cohérent par construction :
+`artanh(v_R) − artanh(v_L) ≥ g(c_L) + g(c_R)`, avec
+`g(c) = (2/√(Γ−1))·artanh(c/√(Γ−1))`. **Contrôle indépendant** : quand `c → 0`,
+`g(c) → 2c/(Γ−1)` et le critère redonne `v_R − v_L ≥ 2(c_L+c_R)/(Γ−1)`, la
+condition classique de Toro §4.6 — vérifié numériquement (I1, écart 8.3e-07).
+Avant durcissement l'oracle renvoyait `ok=true` avec un **résidu ~1e-15** et un
+`p*` supérieur de deux ordres aux pressions initiales pour deux états qui
+s'**éloignent**. Désormais `ok=false`, `VacuumFormed`. Le seuil est net et
+mesuré : `p*` décroît continûment jusqu'à **1.58e-12** à 0,99·v_crit.
+Le vide est **détecté et rejeté, pas résolu** — un solveur vacuum complet reste
+à décider (proposition ci-dessous).
+
+*(b) Flux de masse non signé — défaut manqué par la red-team.* `shockBranch`
+calculait `j = √[(p₂−p₁)/(h₁/ρ₁ − h₂/ρ₂)]`, donc le **module** du flux de masse
+propre, et l'employait tel quel dans la relation de saut du moment. Le signe de
+la famille n'entrait jamais : la formule de l'onde **droite** était appliquée aux
+deux. Conséquence : **tout problème à deux chocs était faux**, avec l'apparence
+de la justesse. Oracle de détection libre de convention : une collision frontale
+symétrique impose `v* = 0` exactement — l'oracle renvoyait **`v* ≈ +0,60`** avec
+un résidu 1e-16. Invisible jusqu'ici parce que MM1/MM2 et Sod ont une onde
+gauche qui est une **détente** : la branche de choc gauche n'était jamais
+exercée. Correctif : `js = sign·j`. Après correction, les quatre collisions
+symétriques donnent `v* = +0.000e+00` **exactement**, la branche de choc est
+symétrique **au bit près** (J3 : 0.000e+00), et MM1/MM2 sont **inchangés**.
+Effet secondaire : un **faux négatif** disparaît aussi (double détente non
+vacuum `L=(1,1,−0.5)`, `R=(1,1,+0.5)`, que l'oracle refusait de résoudre).
+Ajout d'un garde-fou d'encadrement : une borne où l'évaluation a **échoué** ne
+constitue plus un changement de signe (le sentinelle 1e300 fabriquait un faux
+encadrement).
+
+**4. Convergence sur un mode ACOUSTIQUE.** Le test lisse existant transporte un
+mode **contact** (p et v uniformes) : il ne sollicite ni la pression ni le
+couplage acoustique. Ajout d'une onde sonore relativiste de faible amplitude sur
+fond au repos, avec solution linéarisée dérivée sur place. **Indépendance** :
+`c_s = √(Γp₀/(ρ₀h₀))` est écrit dans le test, `characteristicSpeeds()` n'est
+jamais l'oracle de sa propre vitesse (leur accord est rapporté séparément comme
+simple diagnostic : écart **0.00e+00**). Choix d'amplitude **justifié, pas
+empirique** : l'erreur de linéarisation croît comme `A²·k·c_s·t` (raidissement),
+celle de discrétisation comme `A/N²` ; leur rapport vaut `~A·N²`, d'où `A = 1e-6`
+pour `N ≤ 256` — le régime asymptotique est bien celui de la discrétisation.
+Contre-contrôle K1 : l'erreur contre un profil **immobile** est 7000× plus
+grande, donc l'onde s'est réellement propagée à `c_s`.
+Ordres mesurés : **1.909 / 2.024 / 2.051**.
+
+**5. Garde-fous instrumentés.** `characteristicSpeeds()` compte désormais ses
+quatre clamps (`cs2Clamped`, `discNegative`, `denomDegenerate`, `lambdaClamped`).
+Ils restent en place comme protection de release, mais on peut maintenant
+**démontrer** — et non affirmer — qu'ils n'agissent jamais en validation :
+**0 / 0 / 0 / 0** sur toute la suite S3, et 0 pour le clamp de détente de
+l'oracle.
+
+**6. Domaine des paramètres de Kerr.** `horizonOuter/Inner` appliquaient
+`d > 0 ? d : 0`, transformant silencieusement une **singularité nue** (|a| > M)
+en cas extrémal — c'est-à-dire renvoyant un horizon qui n'existe pas. Domaine
+explicite : `M > 0` et `|a| ≤ M`. Le cas **extrémal |a| = M reste supporté**
+(`r+ = r- = M` exactement, vérifié). Forme à préférer : `horizons(rPlus, rMinus)`
+qui renvoie un statut ; les formes commodes renvoient **NaN** hors domaine —
+un sentinel qui se propage, plutôt qu'une valeur plausible. Vérification
+analytique `r+ + r- = 2M` et `r+·r- = a²`.
+
+**7. `initialize()` remet aussi à neuf** `rejected_`, `faultStage_`,
+`faultCell_`, `curStage_` : « simulation neuve » est littéralement vrai.
+
+*Non-régression* : S0/S1 24, consolidation S1 12, S2 20 (145 036 cas), S3 91 —
+**147 assertions, 0 échec**. Ray tracer 640×360 : dérive de Carter
+**1.95819e-07**, identique au bit près à `88d492e`.
+
+*Décision en attente — solveur de vide.* Implémenter la solution vacuum est
+faisable et bien sourcé (détente gauche jusqu'à p=0, région de vide, détente
+droite ; pas de discontinuité de contact) mais ce n'est pas une simple
+extension : l'échantillonnage change de structure. **Non implémenté
+délibérément** — à décider avant S4 selon que les tests GRHD en auront besoin.
+
+---
+
 *Faiblesses assumées et documentées* :
 - HLLE est **diffusif sur les discontinuités de contact** (pas d'onde
   intermédiaire) — visible sur les tubes à choc, choix délibéré de baseline.
