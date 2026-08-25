@@ -200,6 +200,12 @@ bool conservedToPrimitive(const ConservedState& U, const IdealGasEOS& eos,
             status.converged = true;
             status.residual = std::fabs(tlo.f);
             status.lorentzFactor = tlo.W;
+            // Succès, MAIS on signale que u = 0 est ici le meilleur état
+            // représentable et non nécessairement l'état d'origine : la
+            // distinction « vrai fluide froid » / « u > 0 sous le plancher »
+            // n'est pas récupérable depuis U (cf. Fluid.hpp et tests bloc D).
+            // Non fatal — c'est à S3 de décider quoi en faire.
+            status.coldAtMachinePrecision = true;
             return true;
         }
         // Franchement négatif : aucune pression positive ne convient, l'état
@@ -323,6 +329,17 @@ bool conservedToPrimitive(const ConservedState& U, const IdealGasEOS& eos,
 
     status.converged = true;
     status.lorentzFactor = t.W;
+
+    // Diagnostic de conditionnement — critère porté par le RÉSULTAT, pas par
+    // la branche empruntée. Un fluide réellement froid peut, selon l'arrondi,
+    // donner f(0) légèrement positif : il passe alors par l'itération normale
+    // et ressort avec u ~ 1e-17 au lieu de 0. Dans les deux cas u est sous le
+    // plancher de résolution et l'information « vrai froid ou sous-seuil ? »
+    // est perdue de la même façon. On signale donc dès que u n'est pas
+    // résolvable, quel que soit le chemin.
+    if (t.u <= 16.0 * eps * (eos.gamma() - 1.0) * errScale)
+        status.coldAtMachinePrecision = true;
+
     return true;
 }
 

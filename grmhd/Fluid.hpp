@@ -29,20 +29,43 @@ namespace grmhd {
 // interne (petite) serait noyée dans l'énergie de masse (grande) et perdue
 // par annulation catastrophique.
 //
-// ---- √-g : DÉLIBÉRÉMENT ABSENT de la représentation stockée -----------------
-// HARM stocke U_HARM = √-g · U. Ce facteur est un multiplicateur commun à
-// toutes les composantes conservées : il SE SIMPLIFIE EXACTEMENT dans
-// l'inversion (D, S_i, τ y apparaissent homogènement). L'inclure ici
-// n'ajouterait aucune information et alourdirait la validation de S2.
-// Il sera appliqué au niveau du solveur de flux (S3/S4), où il a un sens
-// géométrique — la loi de conservation en espace courbe s'écrivant
-//        ∂_t(√-g U) + ∂_i(√-g F^i) = √-g S.
+// ---- DENSITISATION : DÉLIBÉRÉMENT ABSENTE de la représentation stockée ------
+// Les variables ci-dessus sont les projections eulériennes NON densitisées.
+// Le facteur de volume est un multiplicateur commun à toutes les composantes :
+// il SE SIMPLIFIE EXACTEMENT dans l'inversion (D, S_i, τ y apparaissent
+// homogènement). L'inclure ici n'ajouterait aucune information et alourdirait
+// la validation de S2. Il sera appliqué par le solveur de flux (S3/S4), où il
+// a son sens géométrique, la loi de conservation s'écrivant
+//        ∂_t(√γ U) + ∂_i(√γ F^i) = √γ S.
 // La structure ConservedState n'aura PAS à changer pour autant.
 //
+// ⚠️ ATTENTION AU FACTEUR, DEUX CONVENTIONS COEXISTENT DANS LA LITTÉRATURE :
+//   * Valencia (celle de nos définitions) densitise par **√γ**
+//     (déterminant de la 3-métrique) :
+//         D = √γ ρW ,  S_i = √γ ρhW²v_i ,  τ = √γ(ρhW² - p) - D
+//   * HARM utilise les projections de COORDONNÉES T^t_ν et densitise par
+//     **√-g = α√γ**.
+//   Les deux coïncident pour D (√-g·ρu^t = α√γ·ρW/α = √γ·ρW), mais ce sont
+//   bien deux conventions distinctes : ne pas écrire √-g pour la forme
+//   Valencia.
+//
 // ---- CE QUI CHANGERA EN S4 / S5 ---------------------------------------------
-// S4 (métrique courbe) : W se calcule avec γ_ij (3-métrique) au lieu de δ_ij,
-//   et S_i/τ font intervenir lapse et shift. Les STRUCTURES sont inchangées,
-//   seules les fonctions de conversion deviennent métrique-dépendantes.
+// S4 (métrique courbe). Point important, vérifié contre la formulation 3+1
+//   standard : les DÉFINITIONS de D, S_i, τ ci-dessus ne font intervenir NI
+//   lapse NI shift — ce sont des projections eulériennes locales du tenseur
+//   énergie-impulsion, et leurs formes algébriques restent identiques.
+//   Ce qui change réellement :
+//     - W = 1/√(1 - γ_ij v^i v^j)   : la 3-métrique remplace δ_ij ;
+//     - les indices sont montés/baissés par γ_ij et non plus par δ_ij ;
+//     - α et β^i entrent dans les FLUX (F^i = α(...) - β^i U) et dans les
+//       TERMES SOURCES (dérivées de la métrique) ;
+//     - α et β^i entrent aussi dans la relation entre la primitive ũ^i et la
+//       quadrivitesse de coordonnées :  u^t = W/α ,  u^i = ũ^i - W β^i/α.
+//   Les STRUCTURES sont inchangées ; seules les fonctions de conversion
+//   deviennent métrique-dépendantes.
+//   (Une version antérieure de ce commentaire affirmait que « S_i/τ font
+//    intervenir lapse et shift » — c'était faux et aurait propagé une
+//    convention erronée jusqu'en S4.)
 // S5 (magnétisé) : ajout de B^i aux primitives et des termes de Maxwell au
 //   tenseur énergie-impulsion -> extension par AJOUT de champs. L'inversion
 //   magnétisée est un algorithme DIFFÉRENT (nettement plus dur, Noble et al.
@@ -86,6 +109,21 @@ struct RecoveryStatus {
     // Diagnostics utiles au solveur (S3) pour repérer les zones limites.
     double lorentzFactor = 0.0;
     bool   usedBisection = false;      // le garde-fou a dû intervenir
+
+    // DIAGNOSTIC NON FATAL, distinct de RecoveryFailure.
+    //
+    // Vrai quand l'inversion a retourné u = 0 parce que l'état conservé est
+    // INDISTINGUABLE d'un fluide exactement froid à la précision disponible.
+    // La récupération réussit (converged = true, failure = None) : u = 0 est
+    // le meilleur état représentable. Mais l'information « était-ce un vrai
+    // u = 0, ou un u > 0 tombé sous le plancher de conditionnement ? » est
+    // définitivement perdue — voir la démonstration d'indistinguabilité dans
+    // tests_s2.cpp (bloc D).
+    //
+    // Ce drapeau existe pour que S3 puisse COMPTER ces événements et décider
+    // en connaissance de cause de sa politique de planchers, au lieu de les
+    // voir passer silencieusement pour des fluides froids ordinaires.
+    bool coldAtMachinePrecision = false;
 };
 
 const char* toString(RecoveryFailure f);
