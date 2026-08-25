@@ -168,51 +168,126 @@ void testStepSensitivity() {
 }
 
 // A3 — comportement près de l'axe polaire.
-// PROBLÈME RÉEL : la dérivée ∂_θ utilise θ ± h. Si θ < h, alors θ - h < 0 et
-// metricCovariant applique |sin|, ce qui REFLÈTE la fonction au lieu de la
-// prolonger -> dérivée fausse. On quantifie à partir de quelle distance à
-// l'axe le schéma reste fiable, pour en déduire une contrainte de maillage.
+//
+// ⚠️ DIAGNOSTIC INITIAL ERRONÉ, CORRIGÉ APRÈS PEER REVIEW (2026-08-25).
+// La première version affirmait que le franchissement de l'axe par θ-h
+// provoquait une « réflexion non analytique » via |sinθ|, et en déduisait une
+// contrainte de maillage θ ≥ 1e-2 rad. C'est FAUX, pour deux raisons :
+//
+//  (1) Dans metricFromTrig, `st` n'intervient QUE par `s2 = st*st`, et `ct`
+//      que par `ct*ct`. Le carré efface la valeur absolue :
+//          (|sin θ|)² = sin²θ  exactement.
+//      Les composantes de g sont donc des fonctions de sin²θ et cos²θ, soit
+//      des fonctions PAIRES et analytiques de θ autour de 0. Franchir l'axe
+//      ne produit aucune réflexion : g(-θ) = g(θ) est la bonne prolongation.
+//      (Le plancher 1e-14 ne s'active d'ailleurs que pour θ < 1e-14.)
+//
+//  (2) g étant paire, ∂_θ g est IMPAIRE, donc ∂_θ g → 0 sur l'axe. L'ancien
+//      test normalisait l'erreur absolue par max|∂_θ g_ref| — une référence
+//      qui s'annule. La « dégradation » observée n'était donc qu'un problème
+//      de CONDITIONNEMENT DU DIAGNOSTIC, pas du schéma.
+//
+// Ce test mesure maintenant les trois quantités séparément pour trancher sur
+// la donnée : erreur absolue, erreur relative à la référence évanescente
+// (mal conditionnée), et erreur relative à une échelle métrique qui ne
+// s'annule PAS (max|g|, dimensionnellement homogène puisque θ est sans
+// dimension). Puis il teste ce qui compte réellement pour le solveur : les
+// Christoffels.
 void testAxisProximity() {
     const double a = 0.9, r = 4.0;
     KerrSchild ks(1.0, a);
-    std::printf("       erreur de d_th g en fonction de la distance a l'axe :\n");
-    double errFar = 0.0;
-    for (double th : {1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2}) {
+
+    // --- A3a : g est-elle PAIRE autour de l'axe ? (réfute la réflexion) -----
+    double worstParity = 0.0;
+    for (double th : {1e-7, 1e-5, 1e-3, 1e-2, 0.1}) {
+        double gp[4][4], gm[4][4];
+        ks.metricCovariant(r, th, gp);
+        ks.metricCovariant(r, -th, gm);
+        double scale = 0.0;
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) scale = std::max(scale, std::fabs(gp[i][j]));
+        scale = std::max(scale, 1e-30);
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j)
+                worstParity = std::max(worstParity, std::fabs(gp[i][j] - gm[i][j]) / scale);
+    }
+    report("A3a g(-theta) == g(theta) : pas de reflexion a l'axe", worstParity, 1e-15);
+
+    // --- A3b : les trois métriques d'erreur, cote à cote --------------------
+    std::printf("       d_th g pres de l'axe -- trois normalisations :\n");
+    std::printf("         %-10s %-12s %-14s %-14s %s\n",
+                "theta", "|err| abs", "rel/|d_th g|", "rel/max|g|", "max|d_th g_ref|");
+    double worstAbs = 0.0, worstVsG = 0.0;
+    for (double th : {1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1}) {
         double dg[4][4][4];
         ks.metricDerivatives(r, th, dg);
         double refR[4][4], refT[4][4];
         metricDerivComplexStep(r, th, 1.0, a, refR, refT);
-        double worst = 0.0, scale = 0.0;
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                scale = std::max(scale, std::fabs(refT[i][j]));
-        scale = std::max(scale, 1e-30);
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                worst = std::max(worst, std::fabs(dg[2][i][j] - refT[i][j]) / scale);
-        std::printf("         theta = %.0e  ->  err = %.3e %s\n", th, worst,
-                    (th <= 1e-6) ? "  <-- sous le pas h : schema invalide" : "");
-        if (th >= 1e-2) errFar = std::max(errFar, worst);   // borne sûre mesurée
-    }
-    // MESURE (et non postulat) : la dégradation est régulière en approchant
-    // l'axe — 1.4e-9 à 1e-2 rad, 1.7e-8 à 1e-3, 1.1e-6 à 1e-5. La borne sûre
-    // est donc ~1e-2 rad, PAS 1e-3 comme initialement supposé : on aligne
-    // l'exigence sur la donnée mesurée plutôt que d'élargir la tolérance.
-    report("A3a d_th g fiable a >= 1e-2 rad de l'axe", errFar, 1e-8);
+        double gg[4][4];
+        ks.metricCovariant(r, th, gg);
 
-    // CONTRAINTE DE MAILLAGE qui en découle, vérifiée sur la grille réelle :
-    // le centre de la première cellule doit rester au-delà de cette borne.
-    // Le MKS avec concentration équatoriale l'assure très largement.
-    ModifiedKerrSchild mks(0.3);
-    double worstFirstCell = 0.0;
-    std::printf("       theta du 1er centre de cellule selon la resolution n2 :\n");
-    for (int n2 : {16, 32, 64, 128, 256}) {
-        const double th1 = mks.thetaOf(0.5 / n2);
-        std::printf("         n2 = %3d  ->  theta_1 = %.4e rad %s\n", n2, th1,
-                    th1 > 1e-2 ? "(OK)" : "(TROP PRES DE L'AXE)");
-        if (th1 <= 1e-2) worstFirstCell = 1.0;
+        double absErr = 0.0, refScale = 0.0, gScale = 0.0;
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+                absErr   = std::max(absErr, std::fabs(dg[2][i][j] - refT[i][j]));
+                refScale = std::max(refScale, std::fabs(refT[i][j]));
+                gScale   = std::max(gScale, std::fabs(gg[i][j]));
+            }
+        const double relRef = absErr / std::max(refScale, 1e-300);
+        const double relG   = absErr / std::max(gScale, 1e-300);
+        std::printf("         %-10.0e %-12.3e %-14.3e %-14.3e %.3e\n",
+                    th, absErr, relRef, relG, refScale);
+        worstAbs = std::max(worstAbs, absErr);
+        worstVsG = std::max(worstVsG, relG);
     }
-    report("A3b maillage MKS : 1re cellule au-dela de 1e-2 rad", worstFirstCell, 1e-15);
+    // VERDICT attendu si l'objection est correcte : |err| abs et rel/max|g|
+    // restent ~plats sur 6 décades, tandis que rel/|d_th g| explose parce que
+    // son dénominateur tend vers 0.
+    report("A3b erreur ABSOLUE de d_th g bornee jusqu'a l'axe", worstAbs, 1e-7);
+    report("A3c erreur relative a max|g| (echelle non evanescente)", worstVsG, 1e-9);
+
+    // --- A3d : ce qui compte vraiment pour le solveur, les Christoffels -----
+    // Γ ~ g⁻¹ ∂g, or g^{φφ} ~ 1/(Σ sin²θ) diverge sur l'axe : c'est LÀ que se
+    // poserait un vrai problème de conditionnement, pas dans ∂g. On compare
+    // les Γ issus des différences finies à ceux issus du pas complexe (exact).
+    std::printf("       erreur relative sur les Christoffels pres de l'axe :\n");
+    double worstGamma = 0.0;
+    for (double th : {1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.5}) {
+        Metric4 m;
+        if (!ks.metricAt(r, th, m)) continue;
+
+        double refR[4][4], refT[4][4];
+        metricDerivComplexStep(r, th, 1.0, a, refR, refT);
+        double dgRef[4][4][4] = {};
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) { dgRef[1][i][j] = refR[i][j]; dgRef[2][i][j] = refT[i][j]; }
+
+        double Gref[4][4][4];
+        for (int l = 0; l < 4; ++l)
+            for (int mu = 0; mu < 4; ++mu)
+                for (int nu = 0; nu < 4; ++nu) {
+                    double s = 0.0;
+                    for (int sg = 0; sg < 4; ++sg)
+                        s += m.ginv[l][sg] * (dgRef[mu][sg][nu] + dgRef[nu][sg][mu] - dgRef[sg][mu][nu]);
+                    Gref[l][mu][nu] = 0.5 * s;
+                }
+
+        double Gfd[4][4][4];
+        ks.christoffel(r, th, Gfd);
+
+        double err = 0.0, scale = 0.0;
+        for (int l = 0; l < 4; ++l)
+            for (int mu = 0; mu < 4; ++mu)
+                for (int nu = 0; nu < 4; ++nu) {
+                    err   = std::max(err, std::fabs(Gfd[l][mu][nu] - Gref[l][mu][nu]));
+                    scale = std::max(scale, std::fabs(Gref[l][mu][nu]));
+                }
+        const double rel = err / std::max(scale, 1e-300);
+        std::printf("         theta = %-8.0e  err_rel(Gamma) = %.3e   (max|Gamma| = %.3e)\n",
+                    th, rel, scale);
+        worstGamma = std::max(worstGamma, rel);
+    }
+    report("A3d Christoffels : erreur relative bornee jusqu'a 1e-5 rad", worstGamma, 1e-8);
 }
 
 // =============================================================================
