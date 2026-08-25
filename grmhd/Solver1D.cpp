@@ -145,8 +145,8 @@ void Solver1D::computeRHS(const std::vector<ConservedState>& cons,
         // localement au premier ordre. C'est la pratique standard et cela
         // reste une décision de la brique « reconstruction », pas un floor
         // dissimulé sur l'état physique.
-        if (left.rho  <= 0.0 || left.u  < 0.0) { left  = P[i];     }
-        if (right.rho <= 0.0 || right.u < 0.0) { right = P[i + 1]; }
+        if (left.rho  <= 0.0 || left.u  < 0.0) { left  = P[i];     ++counters_.reconstructionFallbacks; }
+        if (right.rho <= 0.0 || right.u < 0.0) { right = P[i + 1]; ++counters_.reconstructionFallbacks; }
     };
 
     const int loFace = (cfg_.recon == Reconstruction::PiecewiseConstant) ? NG - 1 : NG - 1;
@@ -181,25 +181,57 @@ void Solver1D::recoverPrimitives(std::vector<ConservedState>& cons) {
 
         if (st.coldAtMachinePrecision) ++counters_.coldAtMachinePrecision;
 
+        // `modified` trace si la primitive a été RÉELLEMENT changée par une
+        // politique explicite. C'est la seule condition qui autorise à
+        // réécrire U (cf. contrat ci-dessous).
+        bool modified = false;
+
         if (!ok) {
             ++counters_.recoveryFailures;
-            // Politique explicite : on repart de l'état précédent plutôt que
-            // d'inventer. Compté, donc visible.
-            p = prim_[i];
+            if (cfg_.recoveryPolicy == RecoveryFailurePolicy::Abort) {
+                // Politique de validation : on N'INVENTE PAS d'état. Le pas est
+                // marqué en échec ; c'est au test de le constater plutôt que de
+                // lire un résultat issu d'une réparation.
+                ok_ = false;
+                continue;
+            }
+            p = prim_[i];        // réparation NON CONSERVATIVE, assumée et comptée
+            modified = true;
         }
 
         // --- FLOORS : couche explicite, appliquée APRÈS le recovery ---------
         if (cfg_.floors.enabled) {
             counters_.minRhoBeforeFloor = std::min(counters_.minRhoBeforeFloor, p.rho);
             counters_.minUBeforeFloor   = std::min(counters_.minUBeforeFloor, p.u);
-            if (p.rho < cfg_.floors.rhoMin) { p.rho = cfg_.floors.rhoMin; ++counters_.rhoFloored; }
-            if (p.u   < cfg_.floors.uMin)   { p.u   = cfg_.floors.uMin;   ++counters_.uFloored; }
+            if (p.rho < cfg_.floors.rhoMin) {
+                p.rho = cfg_.floors.rhoMin; ++counters_.rhoFloored; modified = true;
+            }
+            if (p.u < cfg_.floors.uMin) {
+                p.u = cfg_.floors.uMin; ++counters_.uFloored; modified = true;
+            }
         }
 
         prim_[i] = p;
-        // Cohérence : si un floor a modifié la primitive, l'état conservé doit
-        // être resynchronisé, sinon U et P divergeraient silencieusement.
-        cons[i] = primitiveToConserved(p, eos_);
+
+        // --- CONTRAT DE CONSERVATION ----------------------------------------
+        // U est la variable ÉVOLUÉE par le schéma volumes finis : elle fait
+        // foi. Tant que le recovery réussit et qu'aucune politique n'a modifié
+        // P, U doit rester EXACTEMENT tel que produit par la mise à jour
+        // conservative — pas un aller-retour P->U->P.
+        //
+        // Une version antérieure resynchronisait systématiquement
+        // (`cons[i] = primitiveToConserved(p, eos_)`), ce qui injectait à
+        // chaque sous-étage l'erreur d'arrondi de l'aller-retour dans la
+        // variable conservée et affaiblissait la propriété de conservation
+        // que tout le schéma est censé garantir.
+        //
+        // On ne resynchronise donc QUE si P a réellement changé — auquel cas
+        // la conservation est localement rompue par construction, et c'est
+        // comptabilisé.
+        if (modified) {
+            cons[i] = primitiveToConserved(p, eos_);
+            ++counters_.conservativeResyncs;
+        }
     }
 }
 
@@ -257,6 +289,9 @@ int Solver1D::advanceTo(double tEnd, int maxSteps) {
         if (dt <= 0.0) break;
         step(dt);
         ++n;
+        // Sous la politique Abort, on s'arrête net : poursuivre produirait un
+        // résultat d'apparence plausible bâti sur un état non récupéré.
+        if (!ok_) break;
     }
     return n;
 }

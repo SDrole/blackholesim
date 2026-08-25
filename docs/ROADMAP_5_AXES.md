@@ -347,7 +347,7 @@ unitaire pur, aucune simulation.
 **S3 ✅ FAIT & VALIDÉ (2026-08-25)** — `grmhd/Flux.hpp/.cpp`,
 `Riemann.hpp/.cpp`, `Solver1D.hpp/.cpp`, `ExactRiemannSRHD.hpp/.cpp`,
 `Hdf5Writer.hpp/.cpp`, `tests_s3.cpp`, cible `grmhd_s3_tests`.
-**34 tests, 0 échec.**
+**44 tests, 0 échec.**
 
 *Briques indépendamment remplaçables* : flux | reconstruction (PCM / PLM-minmod
 / PLM-MC) | Riemann (HLLE) | CFL | mise à jour | floors | CL. Changer de
@@ -400,6 +400,45 @@ inversé sur LES DEUX familles d'ondes (`p*` sortait à 1e8 au lieu de ~1,45).
 Corrigé en repartant des invariants de Riemann : famille gauche `(u−c)`
 ⟹ `dv/dp < 0`, famille droite `(u+c)` ⟹ `dv/dp > 0`. La concordance avec les
 valeurs publiées de MM1/MM2 confirme la correction.
+
+*Corrections post-peer-review du commit `7a0eee3`* (5 points) :
+1. **Contrat de conservation sur `U`.** `recoverPrimitives` resynchronisait
+   systématiquement `cons[i] = P→U`, injectant à chaque sous-étage l'arrondi
+   d'un aller-retour dans la variable ÉVOLUÉE. Désormais `U` n'est réécrit que
+   si `P` a été **réellement modifié** par une politique explicite ; compteur
+   `conservativeResyncs` à l'appui. Tests D6/D7 : **0 resynchronisation** sur
+   tous les problèmes sains, `U` bit-à-bit intact.
+   *Contrat en cas d'échec de recovery* : politique explicite `Abort` par
+   défaut (le pas est marqué en échec, `solver.ok()` devient faux et
+   `advanceTo` s'arrête) — un échec sur un problème SRHD propre signale un vrai
+   défaut, continuer sur une ancienne primitive produirait un résultat
+   plausible et faux. `FallbackToPrevious` reste disponible, explicitement
+   étiquetée NON CONSERVATIVE, pour l'usage GRMHD futur où quelques échecs en
+   zone de jet sont inévitables.
+2. **Oracle : le terme « exact » est maintenant justifié.** La quadrature RK4
+   (N=2000 fixe) a été remplacée par la **forme close**, obtenue en intégrant
+   analytiquement l'invariant de détente pour une Γ-law — dérivation faite
+   dans le code (`h = (Γ−1)/(Γ−1−c_s²)` puis `dp/(ρhc_s) = 2dc_s/(Γ−1−c_s²)`,
+   d'où `(1+v)/(1−v) = [(1+v_K)/(1−v_K)]·exp(2·sign·[g(c_s)−g(c_K)])`).
+   La quadrature est conservée comme **contre-vérification indépendante** :
+   elle converge vers la forme close à l'**ordre 3,99** puis plafonne à ~1e-15
+   (précision machine), ce qui établit que la forme close EST la limite exacte
+   de l'intégration. Le garde-fou de vitesse est instrumenté :
+   **0 déclenchement**.
+3. **Round-trip HDF5 complet** : relecture de TOUS les datasets écrits
+   (`RHO, UU, U1, U2, U3, x`) + attributs (`t, gam, nx`) **et** des attributs
+   de provenance (`bhsim_stage, metric, absent_fields`), qui portent
+   l'information « ce n'est pas un snapshot iharm complet ». Écart **0,0**.
+4. **HDF5 portable** : plus aucun chemin utilisateur dans le dépôt.
+   `find_package(HDF5)` d'abord, puis indices dérivés de l'ENVIRONNEMENT
+   (`CONDA_PREFIX`, répertoire du `python` du PATH), override
+   `-DHDF5_ROOT=<prefix>` toujours possible. Si HDF5 est absent, la cible se
+   construit sans les tests de sérialisation (`BHSIM_HAVE_HDF5` non défini,
+   stubs qui échouent explicitement) plutôt que de bloquer tout le projet.
+5. **`reconstructionFallbacks` instrumenté**, distinct des floors ρ/u, des
+   échecs de recovery et de `coldAtMachinePrecision`. Affiché sur les tubes à
+   choc : **0** partout — le chiffre vient de l'instrumentation, pas d'une
+   affirmation.
 
 *Faiblesses assumées et documentées* :
 - HLLE est **diffusif sur les discontinuités de contact** (pas d'onde

@@ -48,11 +48,41 @@ struct FloorCounters {
     long long uFloored   = 0;
     long long coldAtMachinePrecision = 0;
     long long recoveryFailures       = 0;
+    // Retour local au 1er ordre quand l'extrapolation PLM produirait ρ ou u
+    // négatif. C'est une décision de la brique RECONSTRUCTION, distincte des
+    // floors physiques — d'où un compteur séparé. Affirmer « il vaut zéro »
+    // n'a de valeur que si c'est instrumenté.
+    long long reconstructionFallbacks = 0;
+    // Nombre de fois où U a dû être resynchronisé depuis P (donc où le schéma
+    // a cessé d'être strictement conservatif sur cette cellule).
+    long long conservativeResyncs = 0;
     double minRhoBeforeFloor = 1e300;   // extrema AVANT correction
     double minUBeforeFloor   = 1e300;
 
     void reset() { *this = FloorCounters{}; }
     long long totalFloors() const { return rhoFloored + uFloored; }
+};
+
+// --- Contrat en cas d'échec de primitive recovery ----------------------------
+// S2 a délibérément refusé de réparer ; S3 doit donc CHOISIR une politique et
+// l'assumer. Deux options, chacune adaptée à un usage différent :
+//
+//  * Abort (DÉFAUT, et le bon choix pour la validation scientifique) :
+//    un échec de recovery sur un problème SRHD propre signale un vrai
+//    problème (schéma, CFL, condition initiale). Continuer sur une ancienne
+//    primitive produirait un résultat d'apparence correcte mais faux, et
+//    masquerait la cause. Le pas est marqué en échec et le test doit échouer.
+//
+//  * FallbackToPrevious : réparation NON CONSERVATIVE (on repart de la
+//    primitive précédente et on resynchronise U). Comptée, jamais silencieuse.
+//    Réservée à un usage futur en production GRMHD, où les zones de jet à
+//    très forte magnétisation rendent quelques échecs inévitables et où
+//    arrêter la simulation n'est pas une option — c'est d'ailleurs ce que
+//    font les codes du domaine (floors + reprise), mais toujours en
+//    comptabilisant les cellules concernées.
+enum class RecoveryFailurePolicy {
+    Abort,
+    FallbackToPrevious
 };
 
 // --- Configuration d'une simulation 1D ---------------------------------------
@@ -65,6 +95,7 @@ struct Solver1DConfig {
     Reconstruction     recon = Reconstruction::PLM_MC;
     BoundaryCondition  bc    = BoundaryCondition::Outflow;
     FloorPolicy        floors{};
+    RecoveryFailurePolicy recoveryPolicy = RecoveryFailurePolicy::Abort;
 };
 
 // -----------------------------------------------------------------------------
@@ -84,6 +115,11 @@ public:
     const Solver1DConfig& config() const { return cfg_; }
     const FloorCounters&  counters() const { return counters_; }
     FloorCounters& mutableCounters() { return counters_; }
+
+    // Faux dès qu'un échec de recovery est survenu sous la politique Abort.
+    // Un test scientifique DOIT le vérifier plutôt que de lire un résultat
+    // produit par une réparation.
+    bool ok() const { return ok_; }
 
     // Centre de la cellule i (indice AVEC ghosts).
     double xc(int i) const { return cfg_.xmin + (i - NG + 0.5) * dx_; }
@@ -134,6 +170,7 @@ private:
     std::vector<PrimitiveState> prim_;
     std::vector<ConservedState> cons_;
     FloorCounters counters_;
+    bool ok_ = true;
 };
 
 }  // namespace grmhd

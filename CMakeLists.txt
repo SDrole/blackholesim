@@ -99,9 +99,52 @@ else()
   target_compile_options(grmhd_s2_tests PRIVATE -Wall -Wextra)
 endif()
 
+# --- Détection HDF5 PORTABLE -------------------------------------------------
+# Aucun chemin utilisateur en dur : le dépôt doit configurer sous Windows local
+# comme sur nos machines Linux/A100.
+#   1. find_package standard (couvre les installations système Linux, apt/yum,
+#      modules HPC, et Windows si HDF5_ROOT est fourni) ;
+#   2. à défaut, indices dérivés de l'ENVIRONNEMENT (CONDA_PREFIX, ou le
+#      répertoire du python trouvé sur le PATH) — jamais d'un nom d'utilisateur.
+#   3. override explicite toujours possible : -DHDF5_ROOT=/chemin
+# Si HDF5 reste introuvable, la cible se construit quand même, sans les tests
+# de sérialisation (BHSIM_HAVE_HDF5 non défini) : on ne bloque pas tout le
+# projet sur une dépendance optionnelle.
+find_package(HDF5 QUIET COMPONENTS C)
+
+if(NOT HDF5_FOUND)
+  set(_bhsim_hdf5_hints "")
+  if(DEFINED ENV{CONDA_PREFIX})
+    list(APPEND _bhsim_hdf5_hints "$ENV{CONDA_PREFIX}" "$ENV{CONDA_PREFIX}/Library")
+  endif()
+  find_program(_bhsim_python NAMES python python3)
+  if(_bhsim_python)
+    get_filename_component(_bhsim_pydir "${_bhsim_python}" DIRECTORY)
+    list(APPEND _bhsim_hdf5_hints "${_bhsim_pydir}" "${_bhsim_pydir}/Library")
+    get_filename_component(_bhsim_pyroot "${_bhsim_pydir}" DIRECTORY)
+    list(APPEND _bhsim_hdf5_hints "${_bhsim_pyroot}" "${_bhsim_pyroot}/Library")
+  endif()
+
+  find_path(BHSIM_HDF5_INCLUDE_DIR hdf5.h
+            HINTS ${_bhsim_hdf5_hints} PATH_SUFFIXES include)
+  find_library(BHSIM_HDF5_LIBRARY NAMES hdf5 libhdf5
+               HINTS ${_bhsim_hdf5_hints} PATH_SUFFIXES lib)
+  if(BHSIM_HDF5_INCLUDE_DIR AND BHSIM_HDF5_LIBRARY)
+    set(HDF5_FOUND TRUE)
+    set(HDF5_INCLUDE_DIRS "${BHSIM_HDF5_INCLUDE_DIR}")
+    set(HDF5_C_LIBRARIES  "${BHSIM_HDF5_LIBRARY}")
+    message(STATUS "HDF5 trouvé via l'environnement : ${BHSIM_HDF5_LIBRARY}")
+  endif()
+endif()
+
+if(HDF5_FOUND)
+  message(STATUS "HDF5 activé : tests de sérialisation S3 inclus.")
+else()
+  message(WARNING "HDF5 introuvable : les tests de sérialisation S3 seront ignorés. "
+                  "Passer -DHDF5_ROOT=<prefix> pour l'activer.")
+endif()
+
 # S3 : solveur SRHD 1D en espace plat + oracle de Riemann exact + HDF5.
-# HDF5 fourni par l'installation conda locale (dette de roadmap soldée en S3).
-set(BHSIM_HDF5_ROOT "C:/Users/becis/miniconda3/Library" CACHE PATH "Racine HDF5")
 add_executable(grmhd_s3_tests
   grmhd/Fluid.cpp
   grmhd/Flux.cpp
@@ -111,12 +154,18 @@ add_executable(grmhd_s3_tests
   grmhd/Hdf5Writer.cpp
   grmhd/tests_s3.cpp
 )
-target_include_directories(grmhd_s3_tests PRIVATE grmhd "${BHSIM_HDF5_ROOT}/include")
-target_link_directories(grmhd_s3_tests PRIVATE "${BHSIM_HDF5_ROOT}/lib")
-target_link_libraries(grmhd_s3_tests PRIVATE hdf5)
-# HDF5 de conda est une DLL : sans ce define, les variables globales du type
-# H5T_NATIVE_DOUBLE_g ne sont pas déclarées dllimport et le lien échoue.
-target_compile_definitions(grmhd_s3_tests PRIVATE H5_BUILT_AS_DYNAMIC_LIB)
+target_include_directories(grmhd_s3_tests PRIVATE grmhd)
+if(HDF5_FOUND)
+  target_include_directories(grmhd_s3_tests PRIVATE ${HDF5_INCLUDE_DIRS})
+  target_link_libraries(grmhd_s3_tests PRIVATE ${HDF5_C_LIBRARIES})
+  target_compile_definitions(grmhd_s3_tests PRIVATE BHSIM_HAVE_HDF5)
+  # Sur Windows, HDF5 packagé (conda) est une DLL : sans ce define, les
+  # variables globales (H5T_NATIVE_DOUBLE_g…) ne sont pas dllimport et le
+  # lien échoue. Inoffensif ailleurs.
+  if(WIN32)
+    target_compile_definitions(grmhd_s3_tests PRIVATE H5_BUILT_AS_DYNAMIC_LIB)
+  endif()
+endif()
 set_target_properties(grmhd_s3_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 if(MSVC)
   target_compile_options(grmhd_s3_tests PRIVATE /W4 /EHsc /D_USE_MATH_DEFINES)
