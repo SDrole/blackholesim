@@ -89,4 +89,22 @@ struct SignalSpeeds {
 
 SignalSpeeds characteristicSpeeds(const FluidVars& f, int dir);
 
+// --- Instrumentation des GARDE-FOUS de characteristicSpeeds ------------------
+// Ces clamps sont légitimes en production (ils empêchent un NaN de se propager
+// depuis un état déjà hors domaine), mais en VALIDATION ils pourraient masquer
+// un état non physique et faire passer un test pour la mauvaise raison.
+// On les compte donc, afin de pouvoir DÉMONTRER — et non affirmer — qu'ils ne
+// se déclenchent jamais dans les tests scientifiques.
+struct CharacteristicClampCounters {
+    long long cs2Clamped     = 0;   // c_s² ramené dans [0,1]
+    long long discNegative   = 0;   // radicande < 0 -> racine forcée à 0
+    long long denomDegenerate = 0;  // 1 - v²c_s² ~ 0 (exige v² = c_s² = 1)
+    long long lambdaClamped  = 0;   // |λ| > 1 ramené dans [-1,1]
+    long long total() const {
+        return cs2Clamped + discNegative + denomDegenerate + lambdaClamped;
+    }
+};
+const CharacteristicClampCounters& characteristicClampCounters();
+void resetCharacteristicClampCounters();
+
 }  // namespace grmhd

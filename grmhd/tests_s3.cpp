@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 using namespace grmhd;
@@ -492,8 +493,14 @@ void testForcedRecoveryFailureAbort() {
     // l'échec survient à l'étage 1, avant toute mutation. Le rollback est testé
     // par D8h.
     reportBool("D8d etat intact (echec precoce, etage 1 -- NON discriminant)", identical);
-    reportBool("D8e l'echec est comptabilise",
-               s.counters().recoveryFailures > recFailBefore);
+    // Le compteur « evolution acceptee » est RESTAURE par le rollback ; c'est la
+    // telemetrie des tentatives rejetees qui porte l'echec. Les deux
+    // significations sont disjointes.
+    reportBool("D8e l'echec est comptabilise (telemetrie rejetee)",
+               s.rejectedTelemetry().during.recoveryFailures > 0
+               && s.rejectedTelemetry().rejectedSteps == 1);
+    reportBool("D8e2 compteurs 'acceptes' restaures par le rollback",
+               s.counters().recoveryFailures == recFailBefore);
     reportBool("D8f aucune resynchronisation non conservative sous Abort",
                s.counters().conservativeResyncs == 0);
     std::printf("       Abort : failure='%s' cellule=%d etage=%d | t inchange=%.17g\n",
@@ -562,6 +569,110 @@ void testAbortRollbackAtStage2() {
                 maxDU, maxDP, s.time());
 }
 
+// D11 — TRANSACTIONALITE DES DIAGNOSTICS.
+// Scenario exige par la revue : un evenement diagnostic est produit a l'ETAGE 1
+// (des floors qui se declenchent reellement), PUIS une faute est injectee a
+// l'ETAGE 2. Apres rollback, l'etat ET les diagnostics « evolution acceptee »
+// doivent correspondre exactement au contrat documente ; l'evenement de l'etage
+// 1 ne doit pas avoir survecu dans `counters()`, mais ne doit pas non plus
+// avoir ete PERDU -- il appartient a `rejectedTelemetry()`.
+void testDiagnosticsAreTransactional() {
+    Solver1DConfig cfg = failCfg(RecoveryFailurePolicy::Abort);
+    // Plancher volontairement HAUT : garantit que des floors se declenchent
+    // a chaque etage. Sans cela le test serait vide de sens.
+    cfg.floors.enabled = true;
+    cfg.floors.rhoMin  = 0.9;    // densite initiale ~1 +- 0.2 -> floors surs
+    cfg.floors.uMin    = 1e-15;
+
+    auto ic = [](double x) { return mkPrim(1.0 + 0.2 * std::sin(2.0 * M_PI * x), 1.0, 0.1); };
+
+    // Cellule de FAIBLE DENSITE injectee expressement pour que des floors se
+    // declenchent a l'ETAGE 1 du pas qui sera ensuite abandonne.
+    // (Etat admissible : E = tau + D > |S| = 0, la recovery reussit ; c'est le
+    // FLOOR qui doit agir, pas un echec.)
+    auto lowDensityCell = []() {
+        ConservedState U;
+        U.D = 1e-6; U.tau = 1e-8;
+        U.S[0] = U.S[1] = U.S[2] = 0.0;
+        return U;
+    };
+    const int floorCell = Solver1D::NG + 4;
+    const int faultCell = Solver1D::NG + 9;
+
+    // CONTRE-CONTROLE, sur un solveur separe : la MEME injection, SANS faute,
+    // doit reellement produire des floors. Sans cela, « aucun floor en
+    // telemetrie » serait vrai trivialement et le test ne prouverait rien.
+    {
+        Solver1D ctrl(cfg);
+        ctrl.initialize(ic);
+        ctrl.step(0.2 * ctrl.dx());
+        const long long before = ctrl.counters().totalFloors();
+        ctrl.injectConservedForTest(floorCell, lowDensityCell());
+        const StepResult cr = ctrl.step(0.2 * ctrl.dx());
+        reportBool("D11a controle : l'injection produit bien des floors a l'etage 1",
+                   cr.ok && ctrl.counters().totalFloors() > before);
+    }
+
+    Solver1D s(cfg);
+    s.initialize(ic);
+    s.step(0.2 * s.dx());
+
+    const double dt = 0.2 * s.dx();
+
+    // L'injection doit precede l'INSTANTANE : c'est l'etat au debut du pas qui
+    // fait foi, et c'est lui que le rollback doit restaurer.
+    s.injectConservedForTest(floorCell, lowDensityCell());
+
+    const double tBefore = s.time();
+    const std::vector<ConservedState> u0 = s.conserved();
+    const std::vector<PrimitiveState> p0 = s.primitives();
+    const FloorCounters c0 = s.counters();
+    const long long rejected0 = s.rejectedTelemetry().rejectedSteps;
+
+    // L'etage 1 se deroulera ENTIEREMENT (floors compris) avant que la faute de
+    // l'etage 2 n'abandonne le pas.
+    s.injectRecoveryFaultForTest(2, faultCell);
+    const StepResult r = s.step(dt);
+
+    reportBool("D11b echec bien signale a l'etage 2",
+               !r.ok && r.failedStage == 2 && r.failedCell == faultCell);
+    reportBool("D11c le temps n'a pas avance", s.time() == tBefore);
+
+    // Etat : bit a bit.
+    double maxDU = 0.0;
+    const std::vector<ConservedState>& nowU = s.conserved();
+    const std::vector<PrimitiveState>& nowP = s.primitives();
+    for (size_t i = 0; i < u0.size(); ++i) {
+        maxDU = std::max(maxDU, std::fabs(nowU[i].D   - u0[i].D));
+        maxDU = std::max(maxDU, std::fabs(nowU[i].tau - u0[i].tau));
+        maxDU = std::max(maxDU, std::fabs(nowP[i].rho - p0[i].rho));
+    }
+    reportBool("D11d etat restaure a l'identique", maxDU == 0.0);
+
+    // Diagnostics « evolution acceptee » : restaures a l'identique, y compris
+    // les floors produits par l'etage 1 de la tentative abandonnee.
+    const FloorCounters& c1 = s.counters();
+    const bool countersRestored =
+        c1.rhoFloored == c0.rhoFloored && c1.uFloored == c0.uFloored &&
+        c1.recoveryFailures == c0.recoveryFailures &&
+        c1.conservativeResyncs == c0.conservativeResyncs &&
+        c1.reconstructionFallbacks == c0.reconstructionFallbacks &&
+        c1.coldAtMachinePrecision == c0.coldAtMachinePrecision;
+    reportBool("D11e diagnostics 'acceptes' restaures par le rollback", countersRestored);
+
+    // ...mais PAS perdus : la tentative rejetee les a captures.
+    const RejectedAttemptTelemetry& tel = s.rejectedTelemetry();
+    reportBool("D11f la tentative rejetee est comptee",
+               tel.rejectedSteps == rejected0 + 1);
+    reportBool("D11g les floors de l'etage 1 sont conserves en telemetrie",
+               tel.during.totalFloors() > 0);
+    reportBool("D11h l'echec de recovery est en telemetrie, pas dans 'accepte'",
+               tel.during.recoveryFailures > 0);
+    std::printf("       Accepte : floors=%lld recFail=%lld | Rejete : pas=%lld floors=%lld recFail=%lld\n",
+                c1.totalFloors(), c1.recoveryFailures,
+                tel.rejectedSteps, tel.during.totalFloors(), tel.during.recoveryFailures);
+}
+
 void testForcedRecoveryFailureFallback() {
     Solver1D s(failCfg(RecoveryFailurePolicy::FallbackToPrevious));
     s.initialize([](double x) { return mkPrim(1.0 + 0.2 * std::sin(2.0 * M_PI * x), 1.0, 0.1); });
@@ -588,7 +699,7 @@ void testReinitializationClearsState() {
     s.initialize([](double x) { return mkPrim(1.0, 1.0, 0.1 * std::sin(x)); });
     s.injectConservedForTest(Solver1D::NG + 3, inadmissibleState());
     s.step(0.2 * s.dx());
-    const bool brokenBefore = !s.ok() && s.counters().recoveryFailures > 0;
+    const bool brokenBefore = !s.ok() && s.rejectedTelemetry().during.recoveryFailures > 0;
 
     // Nouvelle initialisation du MÊME objet.
     s.initialize([](double x) { return mkPrim(1.0 + 0.1 * std::sin(2.0 * M_PI * x), 1.0, 0.05); });
@@ -601,6 +712,9 @@ void testReinitializationClearsState() {
                && s.counters().conservativeResyncs == 0
                && s.counters().reconstructionFallbacks == 0
                && s.counters().coldAtMachinePrecision == 0);
+    reportBool("D10c2 initialize() remet la telemetrie rejetee a zero",
+               s.rejectedTelemetry().rejectedSteps == 0
+               && s.rejectedTelemetry().during.recoveryFailures == 0);
     reportBool("D10d initialize() remet le temps a zero", s.time() == 0.0);
     // Et le solveur doit repartir normalement.
     const StepResult r = s.step(0.2 * s.dx());
@@ -1046,6 +1160,283 @@ void testHDF5() {
 
 }  // namespace
 
+// =============================================================================
+//  DURCISSEMENT PRE-S4
+// =============================================================================
+
+// --- Helpers analytiques, ECRITS ICI et non importes du solveur --------------
+// Le principe de la suite est qu'un oracle ne doit rien partager avec ce qu'il
+// valide. Ces trois fonctions sont donc reecrites a partir de la definition,
+// sans appeler makeFluidVars() ni characteristicSpeeds().
+double refEnthalpy(double rho, double p, double g) { return 1.0 + g * p / ((g - 1.0) * rho); }
+double refSoundSpeed(double rho, double p, double g) {
+    return std::sqrt(g * p / (rho * refEnthalpy(rho, p, g)));
+}
+double refRiemannG(double c, double g) {
+    const double a = std::sqrt(g - 1.0);
+    return (2.0 / a) * std::atanh(c / a);
+}
+
+// --- I : DOMAINE DE L'ORACLE DE RIEMANN --------------------------------------
+void testRiemannVacuumDomain() {
+    const double g = 5.0 / 3.0;
+
+    // I1 — Le critere de vide, verifie contre sa LIMITE NEWTONIENNE.
+    // Quand c -> 0, g(c) -> 2c/(G-1) et artanh(v) -> v, donc le critere
+    // relativiste doit redonner  v_R - v_L >= 2(c_L + c_R)/(G-1)  (Toro §4.6).
+    // C'est une verification INDEPENDANTE de la formule : elle vient d'une
+    // autre theorie, pas d'une relecture de la meme algebre.
+    {
+        double worst = 0.0;
+        for (double p0 : {1e-10, 1e-8, 1e-6}) {
+            const double c = refSoundSpeed(1.0, p0, g);
+            const double relat = 2.0 * refRiemannG(c, g);   // membre de droite
+            const double newt  = 4.0 * c / (g - 1.0);       // 2(c_L+c_R)/(G-1)
+            worst = std::max(worst, std::fabs(relat - newt) / newt);
+        }
+        report("I1 critere de vide -> limite newtonienne de Toro", worst, 1e-6);
+    }
+
+    // I2 — Le SEUIL est net et le solveur est correct JUSTE EN DESSOUS.
+    // On s'approche du seuil par valeurs inferieures : p* doit tendre vers 0
+    // continument (les deux detentes se rejoignent de justesse), et la symetrie
+    // doit imposer v* = 0.
+    {
+        const double p0 = 0.01;
+        const double c = refSoundSpeed(1.0, p0, g);
+        const double vCrit = std::tanh(refRiemannG(c, g));   // seuil symetrique
+        bool belowOk = true;
+        double lastP = 1e300;
+        for (double f : {0.5, 0.8, 0.95, 0.99}) {
+            const double v = f * vCrit;
+            RiemannState L{1.0, p0, -v}, R{1.0, p0, +v};
+            const ExactRiemannSolution s = solveExactRiemannSRHD(L, R, g);
+            if (!s.ok || std::fabs(s.vStar) > 1e-12 || !(s.pStar < lastP)) belowOk = false;
+            lastP = s.pStar;
+        }
+        reportBool("I2 sous le seuil : resolu, v*=0, p* decroissant vers 0", belowOk);
+        std::printf("       (v_crit symetrique = %.6f ; p* a 0.99*v_crit = %.3e)\n", vCrit, lastP);
+    }
+
+    // I3 — ADVERSARIAL : etats fortement divergents -> ECHEC EXPLICITE.
+    // C'est le point de la revue : l'oracle doit dire « hors domaine », jamais
+    // rendre une fausse solution. Avant durcissement il renvoyait ok=true avec
+    // un residu ~1e-15 et un p* SUPERIEUR de deux ordres aux pressions
+    // initiales, pour deux etats qui s'ELOIGNENT.
+    {
+        struct Case { const char* label; RiemannState L, R; };
+        const Case cases[] = {
+            {"double detente v=+-0.5, p=0.01", {1.0, 0.01, -0.5}, {1.0, 0.01, 0.5}},
+            {"double detente v=+-0.9, p=0.01", {1.0, 0.01, -0.9}, {1.0, 0.01, 0.9}},
+            {"ultra-relativiste v=+-0.999",    {1.0, 1.0,  -0.999}, {1.0, 1.0, 0.999}},
+            {"pression infime p=1e-6",         {1.0, 1e-6, -0.9}, {1.0, 1e-6, 0.9}},
+            {"asymetrique",                    {2.0, 0.02, -0.8}, {0.5, 0.005, 0.7}},
+        };
+        bool allRejected = true, allFlagged = true, allDetected = true;
+        for (const Case& c : cases) {
+            if (!riemannVacuumForms(c.L, c.R, g)) allDetected = false;
+            const ExactRiemannSolution s = solveExactRiemannSRHD(c.L, c.R, g);
+            if (s.ok) { allRejected = false; std::printf("       (%s : ACCEPTE A TORT p*=%.3e)\n", c.label, s.pStar); }
+            if (s.failure != RiemannFailure::VacuumFormed) allFlagged = false;
+        }
+        reportBool("I3a formation de vide detectee par le critere", allDetected);
+        reportBool("I3b oracle refuse de resoudre (ok=false)", allRejected);
+        reportBool("I3c cause explicite = VacuumFormed", allFlagged);
+    }
+
+    // I4 — Entrees invalides rejetees, sans NaN silencieux.
+    {
+        bool ok = true;
+        const RiemannState good{1.0, 1.0, 0.0};
+        const RiemannState bad[] = {
+            {-1.0, 1.0, 0.0},                                   // rho < 0
+            {1.0, 1.0, 1.5},                                    // |v| > 1
+            {std::numeric_limits<double>::quiet_NaN(), 1.0, 0.0},
+        };
+        for (const RiemannState& b : bad) {
+            const ExactRiemannSolution s = solveExactRiemannSRHD(b, good, g);
+            if (s.ok || s.failure != RiemannFailure::InvalidInput) ok = false;
+        }
+        reportBool("I4 entrees invalides -> InvalidInput", ok);
+    }
+}
+
+// --- J : SYMETRIE DE L'ORACLE (revele le bug du flux de masse non signe) -----
+// Une collision frontale symetrique impose v* = 0 EXACTEMENT, par symetrie du
+// probleme. Aucune convention de signe n'intervient dans cet enonce : c'est un
+// oracle libre de convention, donc un test qu'on ne peut pas « ajuster ».
+void testRiemannMirrorSymmetry() {
+    const double g = 5.0 / 3.0;
+
+    double worstV = 0.0;
+    bool allOk = true;
+    for (double v : {0.2, 0.5, 0.9}) {
+        for (double p0 : {0.01, 1.0, 100.0}) {
+            RiemannState L{1.0, p0, +v}, R{1.0, p0, -v};   // COLLISION
+            const ExactRiemannSolution s = solveExactRiemannSRHD(L, R, g);
+            if (!s.ok) { allOk = false; continue; }
+            worstV = std::max(worstV, std::fabs(s.vStar));
+            // La densite post-choc doit elle aussi etre symetrique.
+            worstV = std::max(worstV, std::fabs(s.rhoStarL - s.rhoStarR)
+                                      / std::max(s.rhoStarL, 1e-30));
+        }
+    }
+    reportBool("J1 toutes les collisions symetriques sont resolues", allOk);
+    // DISCRIMINANT : avec le flux de masse NON signe, v* valait ~+0.60 au lieu
+    // de 0 (residu 1e-16 : l'oracle etait confiant ET faux).
+    report("J2 collision symetrique -> v* = 0 et rho*_L = rho*_R", worstV, 1e-12);
+
+    // J3 — symetrie miroir de la branche de choc elle-meme :
+    //   shockBranch((rho,p,-v), p2, -1).vPost  ==  -shockBranch((rho,p,+v), p2, +1).vPost
+    double worstS = 0.0;
+    for (double v : {0.0, 0.3, 0.5, 0.9}) {
+        for (double p2 : {0.5, 2.0, 50.0}) {
+            const ShockResult a = shockBranch({1.0, 0.1, -v}, p2, g, -1);
+            const ShockResult b = shockBranch({1.0, 0.1, +v}, p2, g, +1);
+            if (a.ok != b.ok) { worstS = 1.0; continue; }
+            if (!a.ok) continue;
+            worstS = std::max(worstS, std::fabs(a.vPost + b.vPost));
+            worstS = std::max(worstS, std::fabs(a.shockSpeed + b.shockSpeed));
+            worstS = std::max(worstS, std::fabs(a.rhoPost - b.rhoPost));
+        }
+    }
+    report("J3 branche de choc : symetrie miroir gauche/droite", worstS, 1e-14);
+
+    // J4 — NON-REGRESSION : les valeurs publiees ne bougent pas.
+    // Ces problemes n'exercent que la branche DROITE (leur onde gauche est une
+    // detente) : c'est precisement pourquoi ils ne revelaient pas le defaut.
+    {
+        const ExactRiemannSolution mm1 =
+            solveExactRiemannSRHD({10.0, 13.33, 0.0}, {1.0, 1e-6, 0.0}, g);
+        const ExactRiemannSolution mm2 =
+            solveExactRiemannSRHD({1.0, 1000.0, 0.0}, {1.0, 0.01, 0.0}, g);
+        double w = 0.0;
+        w = std::max(w, std::fabs(mm1.pStar - 1.4477) / 1.4477);
+        w = std::max(w, std::fabs(mm1.vStar - 0.7140) / 0.7140);
+        w = std::max(w, std::fabs(mm2.pStar - 18.597) / 18.597);
+        w = std::max(w, std::fabs(mm2.vStar - 0.9604) / 0.9604);
+        report("J4 MM1/MM2 inchanges vs valeurs publiees", w, 1e-4);
+    }
+}
+
+// --- K : CONVERGENCE SUR UN MODE ACOUSTIQUE ----------------------------------
+// Le test lisse existant transporte un mode CONTACT (p et v uniformes) : il ne
+// sollicite ni la pression ni le couplage acoustique. On ajoute donc une onde
+// SONORE relativiste de faible amplitude.
+//
+// SOLUTION LINEARISEE (derivee ici, pas importee). Sur un fond au repos
+// (rho0, p0, v=0), en perturbation isentropique  dp = (G p0/rho0) drho :
+//   continuite : d_t drho + rho0 d_x dv = 0
+//   moment     : rho0 h0 d_t dv + d_x dp = 0
+// d'ou  d_tt drho = c_s^2 d_xx drho  avec  c_s^2 = G p0 /(rho0 h0).
+// Pour une onde progressive vers +x :  dv = c_s drho/rho0.
+//
+// INDEPENDANCE : c_s est calcule ici par G p0/(rho0 h0), PAS via
+// characteristicSpeeds() -- l'oracle ne doit pas fournir sa propre vitesse.
+void testAcousticConvergence() {
+    const double g = 4.0 / 3.0;          // gaz relativiste
+    const double rho0 = 1.0, p0 = 1.0;
+    const double h0 = refEnthalpy(rho0, p0, g);
+    const double cs = std::sqrt(g * p0 / (rho0 * h0));
+    const double A  = 1e-6;              // amplitude : voir justification infra
+
+    // Le fond doit etre franchement relativiste, sinon on ne teste pas grand-chose.
+    reportBool("K0 vitesse du son relativiste (c_s > 0.4 c)", cs > 0.4);
+
+    auto init = [&](double x) {
+        const double sx = std::sin(2.0 * M_PI * x);
+        const double rho = rho0 * (1.0 + A * sx);
+        const double p   = p0   * (1.0 + g * A * sx);
+        const double v   = cs * A * sx;
+        return mkPrim(rho, p / (g - 1.0), v);
+    };
+    // Solution linearisee au temps t : meme profil translate de c_s t.
+    auto exactRho = [&](double x, double t) {
+        return rho0 * (1.0 + A * std::sin(2.0 * M_PI * (x - cs * t)));
+    };
+
+    // Duree : 0.2 periode. L'erreur de LINEARISATION croit comme A^2 * k * c_s * t
+    // (raidissement de l'onde simple) ; celle de DISCRETISATION comme A/N^2.
+    // Leur rapport vaut ~A N^2, il faut donc A << 1/N^2. Avec N <= 256 et
+    // A = 1e-6 : plancher de linearisation ~1.3e-12, tres au-dessous de
+    // l'erreur de discretisation attendue (~1e-11 a N=256). Le regime
+    // asymptotique est donc bien celui de la DISCRETISATION -- c'est la
+    // condition pour que l'ordre mesure ait un sens.
+    const double tEnd = 0.2 / cs;
+
+    const int Ns[] = {32, 64, 128, 256};
+    double errs[4] = {0, 0, 0, 0};
+    double errStatic = 0.0;
+    long long clampsBefore = characteristicClampCounters().total();
+
+    for (int k = 0; k < 4; ++k) {
+        Solver1DConfig cfg;
+        cfg.nx = Ns[k]; cfg.xmin = 0.0; cfg.xmax = 1.0;
+        cfg.cfl = 0.4; cfg.gamma = g;
+        cfg.recon = Reconstruction::PLM_MC;
+        cfg.bc = BoundaryCondition::Periodic;
+        cfg.floors.enabled = false;
+        cfg.recoveryPolicy = RecoveryFailurePolicy::Abort;
+
+        Solver1D s(cfg);
+        s.initialize(init);
+        s.advanceTo(tEnd);
+        if (!s.ok()) { errs[k] = 1e30; continue; }
+
+        double l1 = 0.0, l1static = 0.0;
+        for (int i = Solver1D::NG; i < Solver1D::NG + cfg.nx; ++i) {
+            const double x = s.xc(i);
+            l1       += std::fabs(s.primitives()[i].rho - exactRho(x, tEnd));
+            l1static += std::fabs(s.primitives()[i].rho - exactRho(x, 0.0));
+        }
+        errs[k] = l1 / cfg.nx;
+        if (k == 3) errStatic = l1static / cfg.nx;
+    }
+
+    // CONTRE-CONTROLE : l'onde doit REELLEMENT s'etre deplacee a c_s. Si on
+    // compare au profil initial (onde immobile), l'erreur doit etre BEAUCOUP
+    // plus grande. Sans ce controle, une solution qui ne bouge pas passerait.
+    reportBool("K1 l'onde s'est propagee (vs profil immobile)",
+               errStatic > 20.0 * errs[3]);
+    std::printf("       (L1 vs solution acoustique = %.3e ; vs profil immobile = %.3e)\n",
+                errs[3], errStatic);
+
+    double worstOrder = 1e30;
+    for (int k = 0; k < 3; ++k) {
+        const double order = std::log(errs[k] / errs[k + 1]) / std::log(2.0);
+        worstOrder = std::min(worstOrder, order);
+        std::printf("       N=%3d -> %3d : L1 = %.4e -> %.4e   ordre = %.3f\n",
+                    Ns[k], Ns[k + 1], errs[k], errs[k + 1], order);
+    }
+    reportBool("K2 ordre >= 1.8 sur TOUS les raffinements (mode acoustique)",
+               worstOrder >= 1.8);
+
+    // Le mode acoustique ne doit declencher AUCUN garde-fou.
+    reportBool("K3 aucun clamp caracteristique sur l'onde acoustique",
+               characteristicClampCounters().total() == clampsBefore);
+
+    // COHERENCE (diagnostic, PAS oracle) : la vitesse du son analytique et
+    // lambda_+ du solveur au repos doivent coincider. Rapporte separement pour
+    // qu'il soit clair que ce n'est pas ce qui valide la convergence ci-dessus.
+    {
+        const FluidVars f = makeFluidVars(mkPrim(rho0, p0 / (g - 1.0), 0.0), IdealGasEOS(g));
+        const SignalSpeeds sp = characteristicSpeeds(f, 0);
+        std::printf("       (diagnostic : c_s analytique = %.10f, lambda+ solveur = %.10f, ecart = %.2e)\n",
+                    cs, sp.lambdaPlus, std::fabs(cs - sp.lambdaPlus));
+    }
+}
+
+// --- L : les garde-fous ne masquent rien dans les tests scientifiques --------
+void testClampsNeverFire() {
+    const CharacteristicClampCounters& c = characteristicClampCounters();
+    std::printf("       cs2Clamped=%lld discNegative=%lld denomDegenerate=%lld lambdaClamped=%lld\n",
+                c.cs2Clamped, c.discNegative, c.denomDegenerate, c.lambdaClamped);
+    reportBool("L1 aucun garde-fou de characteristicSpeeds n'a agi", c.total() == 0);
+    std::printf("       clamp de detente de l'oracle : %lld\n", rarefactionClampHits());
+    reportBool("L2 aucun clamp de vitesse dans l'oracle de detente",
+               rarefactionClampHits() == 0);
+}
+
 int main() {
     std::printf("=====================================================================\n");
     std::printf("  S3 : solveur SRHD 1D en espace plat (Minkowski)\n");
@@ -1063,6 +1454,7 @@ int main() {
     std::printf("\n  D8/D9/D10 -- chemins d'echec REELLEMENT forces\n");
     testForcedRecoveryFailureAbort();
     testAbortRollbackAtStage2();
+    testDiagnosticsAreTransactional();
     testForcedRecoveryFailureFallback();
     testReinitializationClearsState();
     std::printf("\n  E -- convergence sur solution LISSE\n");
@@ -1075,6 +1467,14 @@ int main() {
     testLorentzBoostInvariance();
     std::printf("\n  H -- serialisation HDF5\n");
     testHDF5();
+    std::printf("\n  I -- domaine de l'oracle de Riemann (vide)\n");
+    testRiemannVacuumDomain();
+    std::printf("\n  J -- symetrie de l'oracle (flux de masse signe)\n");
+    testRiemannMirrorSymmetry();
+    std::printf("\n  K -- convergence sur un MODE ACOUSTIQUE\n");
+    testAcousticConvergence();
+    std::printf("\n  L -- les garde-fous n'ont pas agi\n");
+    testClampsNeverFire();
 
     std::printf("---------------------------------------------------------------------\n");
     std::printf("  %d tests executes.\n", g_tests);

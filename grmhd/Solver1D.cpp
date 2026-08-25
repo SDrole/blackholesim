@@ -260,6 +260,20 @@ bool Solver1D::recoverPrimitives(std::vector<ConservedState>& cons, StepResult& 
     return true;
 }
 
+void Solver1D::recordRejectedAttempt(const FloorCounters& before) {
+    ++rejected_.rejectedSteps;
+    FloorCounters& d = rejected_.during;
+    d.rhoFloored              += counters_.rhoFloored              - before.rhoFloored;
+    d.uFloored                += counters_.uFloored                - before.uFloored;
+    d.coldAtMachinePrecision  += counters_.coldAtMachinePrecision  - before.coldAtMachinePrecision;
+    d.recoveryFailures        += counters_.recoveryFailures        - before.recoveryFailures;
+    d.reconstructionFallbacks += counters_.reconstructionFallbacks - before.reconstructionFallbacks;
+    d.conservativeResyncs     += counters_.conservativeResyncs     - before.conservativeResyncs;
+    // Extrema : un minimum ne se « soustrait » pas, on le propage.
+    d.minRhoBeforeFloor = std::min(d.minRhoBeforeFloor, counters_.minRhoBeforeFloor);
+    d.minUBeforeFloor   = std::min(d.minUBeforeFloor,   counters_.minUBeforeFloor);
+}
+
 StepResult Solver1D::step(double dt) {
     StepResult res;
     const int nTot = total();
@@ -271,7 +285,17 @@ StepResult Solver1D::step(double dt) {
     // réessayer avec un dt plus petit.
     const std::vector<ConservedState> u0 = cons_;
     const std::vector<PrimitiveState> p0 = prim_;
-    auto rollback = [&]() { cons_ = u0; prim_ = p0; };
+    // Les DIAGNOSTICS font partie de la transaction, au même titre que l'état :
+    // un floor survenu dans une tentative abandonnée n'appartient pas à la
+    // trajectoire retenue. Il n'est pas perdu pour autant — il part dans la
+    // télémétrie des tentatives rejetées, qui, elle, n'est jamais annulée.
+    const FloorCounters c0 = counters_;
+    auto rollback = [&]() {
+        cons_ = u0;
+        prim_ = p0;
+        recordRejectedAttempt(c0);
+        counters_ = c0;
+    };
 
     auto addRHS = [&](std::vector<ConservedState>& dst,
                       const std::vector<ConservedState>& src,

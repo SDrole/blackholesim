@@ -273,7 +273,7 @@ void testAxisProximity() {
                 }
 
         double Gfd[4][4][4];
-        ks.christoffel(r, th, Gfd);
+        if (!ks.christoffel(r, th, Gfd)) continue;
 
         double err = 0.0, scale = 0.0;
         for (int l = 0; l < 4; ++l)
@@ -340,9 +340,13 @@ KSResult integrateKS(const KerrSchild& ks, const GeoIC& ic, double dl, int nstep
     for (int i = 0; i < 4; ++i) pScale = std::max(pScale, std::fabs(p[i]));
     const double nullScale = std::max(pScale * pScale, 1e-30);
 
+    // Un echec de christoffel() doit faire ECHOUER l'integration : poursuivre
+    // avec Gamma = 0 revient a integrer en espace plat, ou les invariants sont
+    // conserves trivialement -- le test passerait pour la mauvaise raison.
+    bool gammaOk = true;
     auto rhs = [&](const double xx[4], const double pp[4], double dx[4], double dp[4]) {
         double G[4][4][4];
-        ks.christoffel(xx[1], xx[2], G);
+        if (!ks.christoffel(xx[1], xx[2], G)) gammaOk = false;
         for (int i = 0; i < 4; ++i) dx[i] = pp[i];
         for (int l = 0; l < 4; ++l) {
             double acc = 0.0;
@@ -369,6 +373,7 @@ KSResult integrateKS(const KerrSchild& ks, const GeoIC& ic, double dl, int nstep
         out.dE = std::max(out.dE, std::fabs(cov(x,p,0)-E0)/std::max(std::fabs(E0),1e-30));
         out.dL = std::max(out.dL, std::fabs(cov(x,p,3)-L0)/std::max(std::fabs(L0),1e-30));
         out.dNull = std::max(out.dNull, std::fabs(nrm(x,p))/nullScale);
+        if (!gammaOk) { out.ok = false; return out; }
     }
     out.r = x[1]; out.th = x[2]; out.pr = p[1]; out.pth = p[2];
     out.ok = true;

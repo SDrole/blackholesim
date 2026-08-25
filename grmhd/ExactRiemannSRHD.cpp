@@ -169,8 +169,15 @@ ShockResult shockBranch(const RiemannState& pre, double pPost, double g, int sig
     const double Ws = 1.0 / std::sqrt(1.0 - Vs * Vs);
 
     // Vitesse post-choc (relation de saut du moment).
-    const double vPost = (h1 * W1 * v1 + Ws * (pPost - p1) / j)
-                       / (h1 * W1 + (pPost - p1) * (Ws * v1 / j + 1.0 / (rho1 * W1)));
+    // ⚠️ CORRECTIF (voir en-tête « FLUX DE MASSE SIGNÉ » dans le .hpp).
+    // Le flux de masse propre j porte le SIGNE DE LA FAMILLE. `std::sqrt`
+    // ci-dessus n'en donne que le module ; l'employer tel quel dans la relation
+    // de saut du moment revient à appliquer la formule de l'onde DROITE aux
+    // deux familles. Symptôme : pour une collision frontale symétrique, où la
+    // symétrie impose v* = 0 exactement, l'oracle renvoyait v* ≈ +0,60.
+    const double js = static_cast<double>(sign) * j;
+    const double vPost = (h1 * W1 * v1 + Ws * (pPost - p1) / js)
+                       / (h1 * W1 + (pPost - p1) * (Ws * v1 / js + 1.0 / (rho1 * W1)));
     if (!(std::fabs(vPost) < 1.0)) return out;
 
     out.ok = true;
@@ -199,10 +206,59 @@ bool branchVelocity(const RiemannState& pre, double p, double g, int sign,
 
 }  // namespace
 
+const char* toString(RiemannFailure f) {
+    switch (f) {
+        case RiemannFailure::None:         return "aucun";
+        case RiemannFailure::InvalidInput: return "entree invalide (rho<=0, p<0, |v|>=1 ou non finie)";
+        case RiemannFailure::VacuumFormed: return "formation de VIDE (hors domaine de l'oracle)";
+        case RiemannFailure::NoBracket:    return "impossible d'encadrer la racine";
+        case RiemannFailure::NotConverged: return "non convergee a la tolerance";
+    }
+    return "?";
+}
+
+bool riemannVacuumForms(const RiemannState& L, const RiemannState& R, double g) {
+    // artanh(v_R) - artanh(v_L)  >=  g(c_L) + g(c_R)   (dérivation dans le .hpp)
+    if (!(L.rho > 0.0) || !(R.rho > 0.0)) return false;
+    if (!(std::fabs(L.v) < 1.0) || !(std::fabs(R.v) < 1.0)) return false;
+    const double cL = soundSpeed(L.rho, L.p, g);
+    const double cR = soundSpeed(R.rho, R.p, g);
+    const double lhs = std::atanh(R.v) - std::atanh(L.v);
+    const double rhs = riemannG(cL, g) + riemannG(cR, g);
+    return lhs >= rhs;
+}
+
+namespace {
+
+bool finiteState(const RiemannState& s) {
+    return std::isfinite(s.rho) && std::isfinite(s.p) && std::isfinite(s.v)
+        && s.rho > 0.0 && s.p >= 0.0 && std::fabs(s.v) < 1.0;
+}
+
+}  // namespace
+
 ExactRiemannSolution solveExactRiemannSRHD(const RiemannState& L,
                                            const RiemannState& R,
                                            double g) {
     ExactRiemannSolution sol;
+
+    // --- Préconditions ------------------------------------------------------
+    if (!finiteState(L) || !finiteState(R) || !(g > 1.0)) {
+        sol.failure = RiemannFailure::InvalidInput;
+        return sol;
+    }
+
+    // --- Domaine : le vide est REJETÉ, jamais approximé ----------------------
+    // Vérifié AVANT la recherche de racine, et non après : au-delà du seuil,
+    // v_L(p) - v_R(p) reste de signe constant sur tout le domaine physique et
+    // la racine n'existe pas. Sans ce garde-fou, l'encadrement se refermait sur
+    // un artefact et l'oracle renvoyait un résultat d'apparence excellente
+    // (résidu ~1e-15) mais physiquement absurde — p* supérieur de deux ordres
+    // aux pressions initiales pour deux états qui s'ÉLOIGNENT.
+    if (riemannVacuumForms(L, R, g)) {
+        sol.failure = RiemannFailure::VacuumFormed;
+        return sol;
+    }
 
     auto residual = [&](double p, double* rl = nullptr, double* rr = nullptr) {
         double vL, vR, rhoL, rhoR;
@@ -223,7 +279,11 @@ ExactRiemannSolution solveExactRiemannSRHD(const RiemannState& L,
         fhi = residual(phi);
         if (phi > 1e30) break;
     }
-    if (flo * fhi > 0.0) return sol;
+    if (flo * fhi > 0.0) { sol.failure = RiemannFailure::NoBracket; return sol; }
+    // Une borne où l'évaluation a ÉCHOUÉ ne constitue pas un changement de
+    // signe : sans ce test, le sentinelle 1e300 fabrique un faux encadrement et
+    // la bissection converge vers la frontière d'échec, pas vers une racine.
+    if (flo >= 1e299 || fhi >= 1e299) { sol.failure = RiemannFailure::NoBracket; return sol; }
 
     double p = 0.0;
     int it = 0;
@@ -240,7 +300,18 @@ ExactRiemannSolution solveExactRiemannSRHD(const RiemannState& L,
     branchVelocity(L, p, g, -1, vL, tmp);
     branchVelocity(R, p, g, +1, vR, tmp);
 
+    // Une racine encadrée mais non résolue reste un échec : mieux vaut le dire
+    // que de livrer un p* dont on ne sait rien.
+    const double vScale = std::max(1.0, std::fabs(vL) + std::fabs(vR));
+    if (!std::isfinite(fFinal) || std::fabs(fFinal) > 1e-8 * vScale) {
+        sol.failure = RiemannFailure::NotConverged;
+        sol.residual = std::fabs(fFinal);
+        sol.pStar = p;
+        return sol;
+    }
+
     sol.ok = true;
+    sol.failure = RiemannFailure::None;
     sol.pStar = p;
     sol.vStar = 0.5 * (vL + vR);
     sol.rhoStarL = rhoL;

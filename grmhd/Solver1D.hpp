@@ -63,6 +63,29 @@ struct FloorCounters {
     long long totalFloors() const { return rhoFloored + uFloored; }
 };
 
+// --- SÉMANTIQUE DES DIAGNOSTICS ----------------------------------------------
+// Deux significations distinctes, délibérément NON mélangées :
+//
+//  * `counters()` — ÉVOLUTION ACCEPTÉE. Décrit exclusivement la trajectoire que
+//    le solveur a réellement retenue. Ces compteurs sont photographiés au début
+//    du pas et RESTAURÉS par le rollback, exactement comme U et P : après un pas
+//    abandonné, l'état ET son diagnostic correspondent au même instant. C'est
+//    la seule sémantique qui rende une assertion du type « 0 floor sur ce
+//    problème » vérifiable : sinon un floor survenu dans une tentative jetée
+//    contaminerait le bilan d'une trajectoire qui ne l'a jamais subi.
+//
+//  * `rejectedTelemetry()` — TENTATIVES REJETÉES. Jamais annulée. C'est
+//    l'information de diagnostic (« pourquoi ce pas a-t-il échoué ? »), qui
+//    serait justement perdue si on la restaurait avec l'état.
+//
+// Les deux sont disjointes par construction : un événement compte dans l'une ou
+// dans l'autre, jamais dans les deux.
+struct RejectedAttemptTelemetry {
+    long long rejectedSteps = 0;      // nombre de pas abandonnés
+    FloorCounters during{};           // événements survenus PENDANT ces pas
+    void reset() { *this = RejectedAttemptTelemetry{}; }
+};
+
 // --- Contrat en cas d'échec de primitive recovery ----------------------------
 // S2 a délibérément refusé de réparer ; S3 doit donc CHOISIR une politique et
 // l'assumer. Deux options, chacune adaptée à un usage différent :
@@ -123,8 +146,11 @@ public:
     double dx()   const { return dx_; }
     double time() const { return t_; }
     const Solver1DConfig& config() const { return cfg_; }
+    // Diagnostics de l'ÉVOLUTION ACCEPTÉE (restaurés par le rollback).
     const FloorCounters&  counters() const { return counters_; }
     FloorCounters& mutableCounters() { return counters_; }
+    // Diagnostics des TENTATIVES REJETÉES (jamais restaurés).
+    const RejectedAttemptTelemetry& rejectedTelemetry() const { return rejected_; }
 
     // Faux dès qu'un échec de recovery est survenu sous la politique Abort.
     // Un test scientifique DOIT le vérifier plutôt que de lire un résultat
@@ -148,6 +174,13 @@ public:
         t_ = 0.0;
         ok_ = true;
         counters_.reset();
+        rejected_.reset();
+        // Les coutures de TEST font partie de l'etat : « simulation neuve »
+        // doit etre litteralement vrai, sinon une faute injectee survivrait a
+        // la reinitialisation et contaminerait le scenario suivant.
+        faultStage_ = 0;
+        faultCell_  = -1;
+        curStage_   = 0;
     }
 
     // ⚠️ RÉSERVÉ AUX TESTS : injecte un état conservé arbitraire pour exercer
@@ -229,7 +262,12 @@ private:
     double t_  = 0.0;
     std::vector<PrimitiveState> prim_;
     std::vector<ConservedState> cons_;
+    // Transfère vers `rejected_` les événements survenus pendant une tentative
+    // abandonnée, puis laisse l'appelant restaurer `counters_`.
+    void recordRejectedAttempt(const FloorCounters& before);
+
     FloorCounters counters_;
+    RejectedAttemptTelemetry rejected_;
     bool ok_ = true;
 
     // Injection de faute (tests uniquement) — cf. injectRecoveryFaultForTest.
