@@ -344,7 +344,79 @@ magnétisé.
 élevés** (pas de magnétisation ici : elle n'existe pas encore). Test
 unitaire pur, aucune simulation.
 
-**S3 — Solveur SRHD en espace plat + tubes à choc**
+**S3 ✅ FAIT & VALIDÉ (2026-08-25)** — `grmhd/Flux.hpp/.cpp`,
+`Riemann.hpp/.cpp`, `Solver1D.hpp/.cpp`, `ExactRiemannSRHD.hpp/.cpp`,
+`Hdf5Writer.hpp/.cpp`, `tests_s3.cpp`, cible `grmhd_s3_tests`.
+**34 tests, 0 échec.**
+
+*Briques indépendamment remplaçables* : flux | reconstruction (PCM / PLM-minmod
+/ PLM-MC) | Riemann (HLLE) | CFL | mise à jour | floors | CL. Changer de
+reconstruction ou de solveur = changer un enum.
+
+*Résultats clés* :
+- **Flux** dérivés du tenseur énergie-impulsion (pas recopiés) ; l'identité
+  `F_τ = (τ+p)v == S^x − D v^x`, issue de deux dérivations distinctes, est
+  vérifiée à 7,2e-16.
+- **Caractéristiques relativistes** : formule complète avec vitesses
+  transverses, validée contre l'oracle algébrique `(v±c_s)/(1±v c_s)` à
+  3,3e-16 dans le cas sans transverse, causalité `|λ|<1` sur 1815 états.
+  Contre-exemple explicite : à `vx=0,9, vt=0,3`, le naïf `v+c_s = 1,4752` est
+  **superluminique** alors que `λ⁺ = 0,9613`.
+- **Conservation globale** (périodique, 76 pas) : `Δ∑D = 2,2e-16`,
+  `Δ∑τ = 0,0`, `Δ∑S_x = 2,7e-15` — télescopage exact, un flux de face unique
+  partagé par les deux cellules adjacentes.
+- **Convergence lisse** (PLM-MC + SSPRK2) : L1 = 1,49e-6 → 3,69e-7 → 8,55e-8
+  → 2,03e-8 pour nx = 50→400, **ordre observé 2,01 / 2,11 / 2,08**.
+- **Oracle de Riemann EXACT** indépendant (ondes exactes + racine sur p*,
+  aucune algèbre partagée avec le solveur numérique). Validé par les relations
+  de Rankine-Hugoniot (2,4e-11 au choc le plus fort) ET par comparaison à la
+  littérature : MM1 `p*=1,4477 v*=0,7140`, MM2 `p*=18,597 v*=0,9604`.
+- **Tubes à choc** : L1 décroissante avec la résolution sur les 3 problèmes ;
+  PLM 5,5× plus précis que PCM (1,80e-1 → 3,25e-2).
+- **Boost de Lorentz** : scalaires `ρ`, `u` invariants (2,8e-15 / 6,9e-15),
+  `u^μu_μ = −1` à 1,1e-16, `p*` invariant sous boost du problème (5,1e-15) et
+  `v*` suivant l'addition relativiste (2,2e-16).
+- **Floors : 0 sur TOUS les tests** (lisse et tubes à choc), 0 échec de
+  recovery, 0 `coldAtMachinePrecision`. Aucun test ne passe grâce à des
+  réparations.
+- **HDF5 opérationnel** (dette de roadmap soldée) : écriture + relecture
+  vérifiées, aller-retour exact à 0,0.
+
+> ⚠️ **Cinquième piège — j'ai reproduit exactement l'erreur de S1-A3.**
+> Le contrôle des relations de Rankine-Hugoniot normalisait le résidu par
+> `|mom1|`. Or au choc fort, `mom = ρhW²v(v−Vs) + p` est la somme de deux
+> termes ~900 et ~1000 qui se compensent pour valoir ~1 : trois chiffres
+> perdus par annulation, et diviser par ce résultat minuscule amplifiait
+> l'arrondi d'un facteur ~1000 (8,3e-9 affiché).
+> Test discriminant décisif : recalculer le contrôle en `long double` n'a
+> **rien changé** (8,27e-9 identique) — donc le problème n'était pas
+> l'arithmétique du test mais sa NORMALISATION. En normalisant par l'échelle
+> des termes réellement sommés : 8,3e-12. La règle « ne pas normaliser par une
+> quantité qui s'effondre là où l'on mesure » doit être appliquée
+> systématiquement, y compris quand on croit l'avoir déjà intégrée.
+
+*Bug réel trouvé dans l'oracle* : le signe de la branche de détente était
+inversé sur LES DEUX familles d'ondes (`p*` sortait à 1e8 au lieu de ~1,45).
+Corrigé en repartant des invariants de Riemann : famille gauche `(u−c)`
+⟹ `dv/dp < 0`, famille droite `(u+c)` ⟹ `dv/dp > 0`. La concordance avec les
+valeurs publiées de MM1/MM2 confirme la correction.
+
+*Faiblesses assumées et documentées* :
+- HLLE est **diffusif sur les discontinuités de contact** (pas d'onde
+  intermédiaire) — visible sur les tubes à choc, choix délibéré de baseline.
+  HLLC s'ajoutera sans toucher au reste (interface prévue).
+- MM3 (avec vitesse initiale) a des L1 nettement plus élevées : le contact y
+  est mal résolu par HLLE, et la solution comporte une structure fine que
+  800 cellules ne capturent pas.
+- Le writer HDF5 est **1D et minimal** ; champs absents documentés comme tels
+  (`B1..B3`, métrique/FMKS/spin), attribut `bhsim_stage="S3-SRHD-flat"` pour
+  qu'un lecteur ne le confonde jamais avec un snapshot GRMHD.
+- Un garde-fou de positivité existe dans la RECONSTRUCTION (retour local au
+  1er ordre si l'extrapolation rend ρ ou u négatif) — c'est une décision de
+  la brique reconstruction, distincte des floors physiques, et il ne s'est
+  déclenché sur aucun test.
+
+**S3 — Solveur SRHD en espace plat + tubes à choc — spécification**
 Reconstruction PLM (minmod/MC), solveur de Riemann HLL, intégrateur RK2/RK3
 SSP. Hydro pur, métrique plate.
 *Tests* : problèmes de Riemann relativistes de **Martí & Müller 1994**
