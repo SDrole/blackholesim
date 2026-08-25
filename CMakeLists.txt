@@ -99,6 +99,31 @@ else()
   target_compile_options(grmhd_s2_tests PRIVATE -Wall -Wextra)
 endif()
 
+# S3 : solveur SRHD 1D en espace plat + oracle de Riemann exact + HDF5.
+# HDF5 fourni par l'installation conda locale (dette de roadmap soldée en S3).
+set(BHSIM_HDF5_ROOT "C:/Users/becis/miniconda3/Library" CACHE PATH "Racine HDF5")
+add_executable(grmhd_s3_tests
+  grmhd/Fluid.cpp
+  grmhd/Flux.cpp
+  grmhd/Riemann.cpp
+  grmhd/Solver1D.cpp
+  grmhd/ExactRiemannSRHD.cpp
+  grmhd/Hdf5Writer.cpp
+  grmhd/tests_s3.cpp
+)
+target_include_directories(grmhd_s3_tests PRIVATE grmhd "${BHSIM_HDF5_ROOT}/include")
+target_link_directories(grmhd_s3_tests PRIVATE "${BHSIM_HDF5_ROOT}/lib")
+target_link_libraries(grmhd_s3_tests PRIVATE hdf5)
+# HDF5 de conda est une DLL : sans ce define, les variables globales du type
+# H5T_NATIVE_DOUBLE_g ne sont pas déclarées dllimport et le lien échoue.
+target_compile_definitions(grmhd_s3_tests PRIVATE H5_BUILT_AS_DYNAMIC_LIB)
+set_target_properties(grmhd_s3_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+  target_compile_options(grmhd_s3_tests PRIVATE /W4 /EHsc /D_USE_MATH_DEFINES)
+else()
+  target_compile_options(grmhd_s3_tests PRIVATE -Wall -Wextra)
+endif()
+
 # Consolidation S1 : vérification du schéma de dérivation (pas complexe) et
 # validation croisée contre le moteur Boyer-Lindquist du ray tracer, utilisé
 # comme ORACLE INDÉPENDANT (déjà validé en production par la conservation de

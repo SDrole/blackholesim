@@ -2,3 +2,5 @@ build/
 output/
 .claude/
 *.log
+grmhd_s3_snapshot.h5
+*.h5
