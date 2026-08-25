@@ -256,13 +256,27 @@ connexion).
   `ũ^i = W v^i`.
 - Conservées `U = (D, S_i, τ)` (Valencia) : `D = ρW`, `S_i = ρhW²v_i`,
   `τ = ρhW² − p − D`. Le `−D` préserve la précision en limite newtonienne.
-- **√-g NON stocké** : facteur commun qui se simplifie exactement dans
-  l'inversion. HARM stocke `√-g·U` ; la multiplication se fera au niveau du
-  solveur de flux (S3/S4). `ConservedState` n'aura pas à changer.
+- **Densitisation NON stockée** : facteur commun qui se simplifie exactement
+  dans l'inversion ; appliquée par le solveur de flux (S3/S4).
+  `ConservedState` n'aura pas à changer.
+  ⚠️ **Deux conventions coexistent, ne pas les confondre** (vérifié) :
+  Valencia — celle de nos définitions — densitise par **√γ** (déterminant de
+  la 3-métrique) : `D = √γ ρW`, `S_i = √γ ρhW²v_i`, `τ = √γ(ρhW²−p) − D` ;
+  HARM utilise les projections de coordonnées `T^t_ν` et densitise par
+  **√-g = α√γ**. Les deux coïncident pour `D`, mais écrire « √-g » pour la
+  forme Valencia est une erreur.
+- **Lapse et shift n'apparaissent PAS dans les définitions de `D`, `S_i`, `τ`**
+  (correction post-peer-review) : ce sont des projections eulériennes locales
+  du tenseur énergie-impulsion, de forme algébrique inchangée en espace
+  courbe. α et β^i entrent dans les **flux** (`F^i = α(...) − β^i U`), les
+  **termes sources** (dérivées de la métrique), et la relation primitive ↔
+  quadrivitesse (`u^t = W/α`, `u^i = ũ^i − W β^i/α`).
 - EOS Γ-law isolée derrière `IdealGasEOS` (pression, enthalpie, c_s²).
-- *Changera en S4* : `W` via `γ_ij`, lapse/shift dans `S_i`/`τ` — structures
-  inchangées. *En S5* : ajout de `B^i` + termes de Maxwell (ajout de champs) ;
-  l'inversion magnétisée est un algorithme DIFFÉRENT, pas une retouche.
+- *Changera en S4* : `W = 1/√(1 − γ_ij v^i v^j)` (la 3-métrique remplace
+  `δ_ij`), indices montés/baissés par `γ_ij`, et α/β^i dans flux + sources —
+  structures inchangées. *En S5* : ajout de `B^i` + termes de Maxwell (ajout
+  de champs) ; l'inversion magnétisée est un algorithme DIFFÉRENT, pas une
+  retouche.
 
 *Inversion* : 1D en pression, encadrement explicite vérifié AVANT itération,
 Newton sécurisé (rtsafe : bascule en bisection si sortie du bracket ou
@@ -296,6 +310,25 @@ pratique : `u` perd des chiffres quand `u/ρ` est petit ET `W` grand
 (ex. `u/ρ=1e-8`, `W=100` → ~4 chiffres restants). **Inhérent à la
 formulation conservative** (u est une différence de grands termes), pas un
 défaut d'algorithme — à garder en tête pour la politique de planchers de S3.
+
+*Diagnostic non fatal `coldAtMachinePrecision`* (ajouté après peer review de
+`a6be8ce`) : quand `u` tombe sous le plancher de résolution, le recovery
+**réussit** (`converged=true`, `failure=None`, `u=0` = meilleur état
+représentable) mais pose ce drapeau, DISTINCT de `RecoveryFailure`. Sans lui,
+S3 ne pourrait pas distinguer un vrai fluide froid d'un état dont l'énergie
+interne est passée sous le plancher — ce qui contredirait la règle « les
+limites de conditionnement se signalent, ne se masquent pas ». 2759 cas
+signalés sur les 145 036 testés. Le critère porte sur le RÉSULTAT (`u` sous le
+plancher) et non sur la branche de code empruntée : un fluide réellement froid
+dont l'arrondi rend `f(0)` légèrement positif passe par l'itération normale et
+ressort avec `u ~ 1e-17` — même perte d'information, donc même signalement.
+
+*Indistinguabilité DÉMONTRÉE, pas supposée* (bloc D des tests) : pour
+`δ/ρ ≲ 1e-18`, l'état conservé `U(u=δ)` est **bit à bit identique** à `U(u=0)`
+(écarts mesurés en ULP : 9335 → 93 → 1 → 0 quand δ/ρ passe de 1e-12 à 1e-18).
+Aucun algorithme ne peut donc récupérer lequel des deux était l'état initial :
+c'est une limite d'INFORMATION dans la représentation conservative, pas une
+limite de notre inversion. Documenté comme tel plutôt que de prétendre trancher.
 
 > ⚠️ **Quatrième piège méthodologique** : mon premier modèle de conditionnement
 > (`½·eps·κ` seul) prédisait des bornes SOUS l'epsilon machine pour les fluides

@@ -124,6 +124,9 @@ void runRoundTrip(RegimeStats& st, const IdealGasEOS& eos,
             continue;
         }
         if (stt.usedBisection) ++st.bisections;
+        // Succès signalé « froid à la précision machine » : ce n'est PAS un
+        // échec, mais S3 doit pouvoir les compter — on les recense ici aussi.
+        if (stt.coldAtMachinePrecision) ++st.conditioningLimited;
 
         st.worstRho = std::max(st.worstRho, relErr(P1.rho, P0.rho));
         st.worstU   = std::max(st.worstU,   relErr(P1.u,   P0.u));
@@ -195,9 +198,10 @@ void testRoundTripByRegime() {
     reportBool("A2a AUCUN echec algorithmique (bracket/convergence)",
                totalAlgo == 0,
                totalAlgo == 0 ? "0 echec algorithmique" : "echecs algorithmiques presents");
-    std::printf("       -> %lld cas limites par CONDITIONNEMENT (u<0 par annulation),\n"
-                "          signales explicitement et non corriges : c'est a S3 de\n"
-                "          decider d'une politique de planchers.\n", totalCond);
+    std::printf("       -> %lld cas signales 'coldAtMachinePrecision' : succes NON FATAL\n"
+                "          (converged=true, failure=None, u=0 = meilleur etat\n"
+                "          representable). Comptabilises pour que S3 decide de sa\n"
+                "          politique de planchers en connaissance de cause.\n", totalCond);
 }
 
 // A3 — conditionnement de `u` : mise en évidence quantitative.
@@ -553,6 +557,130 @@ void testNearAdmissibilityBoundary() {
     reportBool("C3b convergence sur toute la frontiere testee", ok == n);
 }
 
+// =============================================================================
+//  BLOC D — le diagnostic de conditionnement « froid à la précision machine »
+// =============================================================================
+
+// D1 — INDISTINGUABILITÉ : un vrai u=0 et un u>0 sous le seuil produisent-ils
+// le même état conservé ?
+//
+// Question posée par la peer review : plutôt que de PRÉTENDRE identifier
+// lequel des deux était l'état d'origine, on mesure si l'information subsiste
+// dans U. Méthode : construire les deux états, convertir en double, et
+// comparer les U bit à bit. Si les représentations sont identiques, AUCUN
+// algorithme ne peut les distinguer — c'est une limite d'information, pas
+// d'algorithme.
+void testColdIndistinguishability() {
+    const IdealGasEOS eos(4.0 / 3.0);
+    std::printf("       U(u=0) vs U(u=delta) : a partir de quel delta les etats\n"
+                "       conserves deviennent-ils IDENTIQUES en double ?\n");
+    std::printf("         %-8s %-12s %-14s %-14s %s\n",
+                "W", "delta/rho", "dD (ulp)", "dS (ulp)", "dtau (ulp)");
+
+    bool foundIdentical = false;
+    double largestIndistinguishable = 0.0;
+
+    for (double W : {10.0, 100.0}) {
+        const double ut = std::sqrt(W * W - 1.0);
+        PrimitiveState cold;
+        cold.rho = 1.0; cold.u = 0.0;
+        cold.utilde[0] = ut; cold.utilde[1] = 0.0; cold.utilde[2] = 0.0;
+        const ConservedState Ucold = primitiveToConserved(cold, eos);
+
+        for (double d : {1e-12, 1e-14, 1e-16, 1e-18, 1e-20}) {
+            PrimitiveState warm = cold;
+            warm.u = d * cold.rho;
+            const ConservedState Uwarm = primitiveToConserved(warm, eos);
+
+            // Écarts exprimés en ULP (unités du dernier bit) : la bonne
+            // mesure pour « ces deux doubles sont-ils le même nombre ? ».
+            auto ulps = [](double a, double b) {
+                const double m = std::max(std::fabs(a), std::fabs(b));
+                if (m == 0.0) return 0.0;
+                // ulp d'un double de magnitude m
+                const double ulp = std::nextafter(m, 1e308) - m;
+                return std::fabs(a - b) / std::max(ulp, 1e-300);
+            };
+            const double dD = ulps(Ucold.D, Uwarm.D);
+            const double dS = ulps(Ucold.S[0], Uwarm.S[0]);
+            const double dT = ulps(Ucold.tau, Uwarm.tau);
+            std::printf("         %-8.0f %-12.0e %-14.1f %-14.1f %.1f\n",
+                        W, d, dD, dS, dT);
+            if (dD == 0.0 && dS == 0.0 && dT == 0.0) {
+                foundIdentical = true;
+                largestIndistinguishable = std::max(largestIndistinguishable, d);
+            }
+        }
+    }
+
+    reportBool("D1 existence d'un domaine strictement indistinguable",
+               foundIdentical,
+               foundIdentical ? "des etats u>0 donnent un U bit-a-bit identique a u=0"
+                              : "aucun cas identique trouve dans la plage testee");
+    std::printf("       -> CONCLUSION : pour delta/rho <= %.0e (dans la plage testee),\n"
+                "          U(u=delta) est BIT A BIT identique a U(u=0). La distinction\n"
+                "          est donc MATHEMATIQUEMENT IMPOSSIBLE apres conversion en\n"
+                "          double : ce n'est pas une limite de notre inversion. Le\n"
+                "          recovery retourne u=0 (meilleur etat representable) et pose\n"
+                "          coldAtMachinePrecision pour que S3 le sache.\n",
+                largestIndistinguishable);
+}
+
+// D2 — le drapeau est-il bien posé quand il faut, et SEULEMENT quand il faut ?
+void testColdFlagSemantics() {
+    const IdealGasEOS eos(4.0 / 3.0);
+    PrimitiveState P; RecoveryStatus st;
+
+    // (a) Fluide franchement chaud : le drapeau NE DOIT PAS etre pose.
+    bool okWarm = true;
+    for (double W : {1.0, 2.0, 20.0}) {
+        PrimitiveState P0; P0.rho = 1.0; P0.u = 1.0;
+        const double ut = std::sqrt(std::max(W * W - 1.0, 0.0));
+        P0.utilde[0] = ut;
+        const ConservedState U = primitiveToConserved(P0, eos);
+        if (!conservedToPrimitive(U, eos, P, st)) { okWarm = false; continue; }
+        if (st.coldAtMachinePrecision) okWarm = false;
+    }
+    reportBool("D2a fluide chaud : drapeau NON pose", okWarm);
+
+    // (b) Fluide exactement froid construit analytiquement : recovery reussit,
+    //     u = 0, et le drapeau EST pose (u=0 est ici indistinguable d'un
+    //     sous-seuil, on ne pretend pas trancher).
+    bool okCold = true;
+    for (double W : {1.5, 10.0, 100.0}) {
+        const double ut = std::sqrt(W * W - 1.0);
+        ConservedState U;
+        U.D = 1.0 * W;
+        U.S[0] = 1.0 * W * ut; U.S[1] = 0.0; U.S[2] = 0.0;
+        U.tau = U.D * (W - 1.0);
+        if (!conservedToPrimitive(U, eos, P, st)) { okCold = false; continue; }
+        // u doit être nul ou sous le plancher de résolution — on n'exige PAS
+        // u == 0.0 exactement : selon l'arrondi, f(0) peut sortir légèrement
+        // positif et l'itération normale rendre u ~ 1e-17. Ce qui compte est
+        // que u soit négligeable ET que le drapeau soit posé.
+        if (!(P.u / U.D < 1e-15)) okCold = false;
+        if (!st.coldAtMachinePrecision) okCold = false;
+        if (st.failure != RecoveryFailure::None) okCold = false;
+        if (!st.converged) okCold = false;
+    }
+    reportBool("D2b fluide froid : succes + u negligeable + drapeau + failure=None", okCold);
+
+    // (c) Fluide sous le seuil : meme traitement, drapeau pose, PAS d'echec.
+    bool okSub = true; int flagged = 0;
+    for (double W : {50.0, 200.0}) {
+        PrimitiveState P0; P0.rho = 1.0; P0.u = 1e-18;
+        const double ut = std::sqrt(W * W - 1.0);
+        P0.utilde[0] = ut;
+        const ConservedState U = primitiveToConserved(P0, eos);
+        if (!conservedToPrimitive(U, eos, P, st)) { okSub = false; continue; }
+        if (st.failure != RecoveryFailure::None) okSub = false;
+        if (st.coldAtMachinePrecision) ++flagged;
+    }
+    reportBool("D2c etat sous le seuil : succes non fatal, signale", okSub && flagged > 0);
+    std::printf("       -> le drapeau est un DIAGNOSTIC, pas un echec : converged=true,\n"
+                "          failure=None. S3 pourra compter ces cellules et decider.\n");
+}
+
 }  // namespace
 
 int main() {
@@ -574,6 +702,10 @@ int main() {
     testNewtonianLimit();
     testRejectionOfInvalidStates();
     testNearAdmissibilityBoundary();
+
+    std::printf("\n  BLOC D -- diagnostic de conditionnement (froid a la precision machine)\n");
+    testColdIndistinguishability();
+    testColdFlagSemantics();
 
     std::printf("---------------------------------------------------------------------\n");
     std::printf("  %lld cas testes au total.\n", g_casesRun);
