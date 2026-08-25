@@ -122,15 +122,9 @@ précision machine car sans soustraction donc sans annulation catastrophique).*
 - Balayage du pas `h` sur 10 décades : courbe en V classique, optimum
   empirique à `h≈1e-4` (8,5e-12). Le `h=1e-6` de production est ~10× au-dessus
   de l'optimum, donc **dans le plateau** — validé, pas sur un flanc.
-- **Proximité de l'axe polaire — contrainte de maillage découverte** :
-  `∂_θ g` se dégrade régulièrement près de l'axe (1,4e-9 à 1e-2 rad ;
-  1,7e-8 à 1e-3 ; 1,1e-6 à 1e-5) car les points `θ±h` finissent par franchir
-  l'axe, où `|sinθ|` réfléchit la fonction au lieu de la prolonger.
-  **Borne sûre MESURÉE : ≥ 1e-2 rad** (ma borne initiale de 1e-3 était
-  optimiste d'une décade — corrigée sur la donnée, pas en élargissant la
-  tolérance). Vérifié que le MKS la respecte largement : 1re cellule à
-  1,04e-2 rad même à n2=256. ⚠️ **À revérifier si on augmente la résolution
-  polaire au-delà de n2≈256, ou si on change `hslope`.**
+- **Proximité de l'axe polaire — AUCUNE contrainte de maillage.**
+  ⚠️ Voir ci-dessous : les deux versions précédentes de ce diagnostic étaient
+  fausses, corrigées après peer review externe.
 
 *Bloc B — validation croisée contre le ray tracer Boyer-Lindquist* (oracle
 INDÉPENDANT : formalisme hamiltonien canonique, code de production déjà
@@ -157,6 +151,49 @@ sont liés directement dans la cible de test.
 > Règle à appliquer systématiquement : **un test de convergence n'est valide
 > que dans le régime où l'erreur de troncature domine** — il faut le vérifier
 > explicitement, pas le supposer.
+
+> ⚠️⚠️ **Troisième piège, le plus instructif — diagnostic A3 faux DEUX FOIS,
+> corrigé par peer review externe du commit `dedffd9`.**
+>
+> J'avais affirmé qu'une « réflexion non analytique » de `|sinθ|` en
+> franchissant l'axe dégradait `∂_θ g`, et j'en avais tiré une contrainte de
+> maillage `θ ≥ 1e-2 rad`. **Les deux affirmations sont fausses.**
+>
+> *Réfutation analytique* : dans `metricFromTrig`, `st` n'intervient QUE par
+> `s2 = st*st` et `ct` que par `ct*ct`. Le carré efface la valeur absolue —
+> `(|sinθ|)² = sin²θ` exactement. Les composantes de g sont donc des fonctions
+> de `sin²θ`/`cos²θ`, **paires et analytiques** autour de θ=0 : `g(-θ)=g(θ)`
+> est la bonne prolongation, pas une réflexion parasite. (Le plancher `1e-14`
+> ne s'active que pour θ<1e-14, jamais dans la plage testée.)
+> Vérifié numériquement : `A3a` donne **exactement 0,000e+00**.
+>
+> *Origine réelle de l'artefact* : g étant paire, `∂_θ g` est IMPAIRE donc
+> `→ 0` sur l'axe. Mon test normalisait une erreur d'arrondi qui NE s'annule
+> pas par une référence qui s'annule ∝θ. Mesures à r=4, a=0,9 :
+>
+> | θ | err absolue | rel/\|∂_θg\| | rel/max\|g\| | \|∂_θg_ref\| |
+> |---|---|---|---|---|
+> | 1e-7 | 3,5e-10 | **1,05e-4** | 2,1e-11 | 3,4e-6 |
+> | 1e-3 | 5,6e-10 | 1,67e-8 | 3,3e-11 | 3,4e-2 |
+> | 1e-1 | 5,7e-10 | **1,70e-10** | 3,4e-11 | 3,34 |
+>
+> L'erreur absolue et l'erreur relative à `max|g|` (échelle non évanescente,
+> dimensionnellement homogène) sont **plates sur 6 décades**. Seul le ratio
+> mal conditionné explose, exactement ∝1/θ.
+>
+> *Ce qui compte réellement* — les Christoffels, seuls utilisés par le
+> solveur : erreur relative **6,2e-13 à θ=1e-5**, meilleure que loin de l'axe
+> (2,9e-11 à θ=0,5), car `max|Γ|` croît en 1/θ et les grandes composantes sont
+> calculées avec une bonne précision relative.
+>
+> **Conclusion : aucune contrainte de maillage polaire. Le schéma est fiable
+> jusqu'à au moins 1e-5 rad de l'axe.**
+>
+> Règle ajoutée : **choisir une échelle de normalisation qui ne s'annule pas
+> là où l'on mesure** — sinon on diagnostique le conditionnement de sa propre
+> métrique d'erreur, pas le code. Et corollaire méthodologique : deux erreurs
+> successives sur le même point sont passées à travers mes propres tests ; la
+> revue externe reste indispensable.
 
 **S0 — Infrastructure & sortie**
 Répertoire `grmhd/`, cible CMake séparée, structures de grille, interface
@@ -208,7 +245,66 @@ connexion).
 > passe trop bien**, et vérifier algébriquement qu'il n'est pas satisfait par
 > construction.
 
-**S2 — Primitives ↔ conservées, HYDRO relativiste (sans champ B)**
+**S2 ✅ FAIT & VALIDÉ (2026-08-25)** — `grmhd/EOS.hpp`, `grmhd/Fluid.hpp/.cpp`,
+`grmhd/tests_s2.cpp`, cible `grmhd_s2_tests`. **145 036 cas testés, 0 échec.**
+
+*Conventions verrouillées* (pensées pour survivre à S4/S5) :
+- Primitives `P = (ρ, u, ũ^i)` — convention HARM : `u` = densité d'énergie
+  interne (pas la pression) ; `ũ^i` = vitesse relative à l'observateur normal.
+  **Choix décisif** : `ũ^i` est SANS contrainte, donc `W = √(1+γ_ij ũ^i ũ^j)`
+  rend une vitesse superluminique structurellement impossible. Espace plat :
+  `ũ^i = W v^i`.
+- Conservées `U = (D, S_i, τ)` (Valencia) : `D = ρW`, `S_i = ρhW²v_i`,
+  `τ = ρhW² − p − D`. Le `−D` préserve la précision en limite newtonienne.
+- **√-g NON stocké** : facteur commun qui se simplifie exactement dans
+  l'inversion. HARM stocke `√-g·U` ; la multiplication se fera au niveau du
+  solveur de flux (S3/S4). `ConservedState` n'aura pas à changer.
+- EOS Γ-law isolée derrière `IdealGasEOS` (pression, enthalpie, c_s²).
+- *Changera en S4* : `W` via `γ_ij`, lapse/shift dans `S_i`/`τ` — structures
+  inchangées. *En S5* : ajout de `B^i` + termes de Maxwell (ajout de champs) ;
+  l'inversion magnétisée est un algorithme DIFFÉRENT, pas une retouche.
+
+*Inversion* : 1D en pression, encadrement explicite vérifié AVANT itération,
+Newton sécurisé (rtsafe : bascule en bisection si sortie du bracket ou
+progrès insuffisant → convergence garantie par la bisection, vitesse par
+Newton). Statut complet retourné (convergence, itérations, résidu, raison
+d'échec, W, recours à la bisection). **Aucun plancher correctif** : les états
+inadmissibles sont signalés, jamais réparés — la politique de planchers est
+une décision explicite de S3.
+
+*Trois bugs numériques trouvés et corrigés pendant la validation* :
+1. **Échelle du critère de convergence.** Le résidu `f` est une PRESSION ;
+   je le normalisais par `max(|p|, τ, D)`. Pour ρ=1e6 et u=1e-8 cela tolérait
+   `|f| ≤ 1e-8` alors que la racine vaut `p ≈ 3,3e-9` — l'erreur admise
+   dépassait la quantité cherchée. Le fluide au repos, pourtant exactement
+   soluble, sortait à 8e-4 d'erreur. → critère RELATIF à `p`.
+2. **Annulation catastrophique dans `u`.** La forme naïve
+   `u = ρ(h−1−p/ρ)` soustrait des termes contenant tous la masse au repos.
+   Réécriture algébriquement exacte : `u = [τ − D(W−1)]/W² − p(1−1/W²)`.
+   Au repos (W=1) : `u = τ` EXACTEMENT, `D` n'intervient plus. Le test
+   « fluide au repos » est passé de 8e-4 à **0,000e+00**.
+3. **Modèle d'arrondi du seuil « froid ».** L'erreur sur `D(W−1)` n'est pas
+   `eps·D(W−1)` : comme `1−v² ~ 1/W²`, l'arrondi ABSOLU de `v²` devient une
+   erreur relative `~eps·W²` sur `W`, d'où une contribution `~½·eps·D·W` qui
+   DOMINE. L'ignorer sous-estimait le seuil d'un facteur ~80 et faisait
+   rejeter 438 états valides.
+
+*Domaine mal conditionné — DOCUMENTÉ, non masqué* : la borne d'erreur dérivée
+est `δu/u ≈ ½·eps·(κ + 2W²)` avec `κ ≡ ρW²/u`. Vérifiée sur 5000 cas contre
+un oracle `long double` : rapport observé/prédit **max 5,25**. Conséquence
+pratique : `u` perd des chiffres quand `u/ρ` est petit ET `W` grand
+(ex. `u/ρ=1e-8`, `W=100` → ~4 chiffres restants). **Inhérent à la
+formulation conservative** (u est une différence de grands termes), pas un
+défaut d'algorithme — à garder en tête pour la politique de planchers de S3.
+
+> ⚠️ **Quatrième piège méthodologique** : mon premier modèle de conditionnement
+> (`½·eps·κ` seul) prédisait des bornes SOUS l'epsilon machine pour les fluides
+> chauds (κ→0) — une borne qu'aucun calcul ne peut respecter, d'où des rapports
+> observé/prédit de 3,6e6 sur des cas parfaitement sains. Il manquait le terme
+> `2W²`, qui subsiste quand κ→0. **Une borne d'erreur théorique doit toujours
+> être confrontée au plancher machine avant d'être utilisée comme critère.**
+
+**S2 — Primitives ↔ conservées, HYDRO relativiste (sans champ B) — spécification**
 `P→U` analytique ; `U→P` par recherche de racine 1D — docile comparé au cas
 magnétisé.
 *Test* : aller-retour `P→U→P` sur un large domaine, **facteurs de Lorentz

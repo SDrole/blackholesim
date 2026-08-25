@@ -86,6 +86,19 @@ else()
   target_compile_options(grmhd_tests PRIVATE -Wall -Wextra)
 endif()
 
+# S2 : primitives <-> conservées, hydrodynamique relativiste pure.
+add_executable(grmhd_s2_tests
+  grmhd/Fluid.cpp
+  grmhd/tests_s2.cpp
+)
+target_include_directories(grmhd_s2_tests PRIVATE grmhd)
+set_target_properties(grmhd_s2_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+  target_compile_options(grmhd_s2_tests PRIVATE /W4 /EHsc)
+else()
+  target_compile_options(grmhd_s2_tests PRIVATE -Wall -Wextra)
+endif()
+
 # Consolidation S1 : vérification du schéma de dérivation (pas complexe) et
 # validation croisée contre le moteur Boyer-Lindquist du ray tracer, utilisé
 # comme ORACLE INDÉPENDANT (déjà validé en production par la conservation de
