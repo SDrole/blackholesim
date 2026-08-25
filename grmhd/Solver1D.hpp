@@ -85,6 +85,16 @@ enum class RecoveryFailurePolicy {
     FallbackToPrevious
 };
 
+// Résultat d'un pas de temps. Retourné explicitement plutôt que signalé par un
+// seul drapeau global : l'appelant doit pouvoir décider (arrêter, réessayer
+// avec un dt plus petit, diagnostiquer) sans inspecter l'état interne.
+struct StepResult {
+    bool ok = true;
+    RecoveryFailure failure = RecoveryFailure::None;
+    int  failedCell = -1;       // indice AVEC ghosts, -1 si aucun
+    int  failedStage = -1;      // 1 ou 2 (étage SSPRK2), -1 si aucun
+};
+
 // --- Configuration d'une simulation 1D ---------------------------------------
 struct Solver1DConfig {
     int    nx      = 200;
@@ -125,6 +135,10 @@ public:
     double xc(int i) const { return cfg_.xmin + (i - NG + 0.5) * dx_; }
 
     // Initialisation à partir d'une fonction x -> primitives.
+    // Une réinitialisation doit rendre l'objet RÉELLEMENT neuf : temps,
+    // diagnostic d'échec ET compteurs. Sinon un solveur ayant échoué
+    // conserverait `ok_ == false` et des compteurs pollués, et le test suivant
+    // hériterait silencieusement de l'état du précédent.
     template <typename Fn>
     void initialize(Fn&& f) {
         for (int i = 0; i < total(); ++i) prim_[i] = f(xc(i));
@@ -132,6 +146,31 @@ public:
         for (int i = 0; i < total(); ++i)
             cons_[i] = primitiveToConserved(prim_[i], eos_);
         t_ = 0.0;
+        ok_ = true;
+        counters_.reset();
+    }
+
+    // ⚠️ RÉSERVÉ AUX TESTS : injecte un état conservé arbitraire pour exercer
+    // les chemins d'échec de recovery, qui sont sinon inatteignables sur des
+    // problèmes sains. Aucun usage en production.
+    void injectConservedForTest(int i, const ConservedState& U) { cons_[i] = U; }
+
+    // ⚠️ RÉSERVÉ AUX TESTS : force un échec de recovery à un ÉTAGE choisi.
+    //
+    // Pourquoi cette couture est nécessaire. Un état conservé inadmissible
+    // injecté avant le pas est rejeté dès l'étage 1, c'est-à-dire AVANT que
+    // `cons_` n'ait été modifié : un test « l'état est intact après un Abort »
+    // passe alors même si le rollback est entièrement supprimé — il ne teste
+    // rien. Le rollback n'a d'effet OBSERVABLE que si l'échec survient à
+    // l'étage 2, quand `cons_` porte déjà la mise à jour de l'étage 1. Or on
+    // ne peut pas atteindre l'étage 2 par injection d'état, puisque l'étage 1
+    // rejetterait cet état. D'où une injection de faute explicite, la seule
+    // façon honnête de rendre le test discriminant.
+    //
+    // stage = 0 désactive ; cell est un indice AVEC ghosts.
+    void injectRecoveryFaultForTest(int stage, int cell) {
+        faultStage_ = stage;
+        faultCell_  = cell;
     }
 
     // Pas de temps CFL fondé sur la vitesse de signal RÉELLEMENT calculée
@@ -141,7 +180,18 @@ public:
     // Un pas SSPRK2 (Heun fort-stabilité) :
     //   U^(1) = U^n + dt L(U^n)
     //   U^{n+1} = ½U^n + ½(U^(1) + dt L(U^(1)))
-    void step(double dt);
+    //
+    // TRANSACTIONNEL sous la politique Abort : si une conversion U→P échoue à
+    // un quelconque étage, aucun flux n'est calculé à partir d'un état
+    // périmé, `U` et `P` sont RESTAURÉS tels qu'au début du pas, et `t_`
+    // n'avance pas. Justification du rollback plutôt que d'un état
+    // partiellement mis à jour :
+    //   * cohérence — un état à moitié avancé avec un `t_` inchangé ne
+    //     correspond à AUCUN temps physique ;
+    //   * il rend possible la réponse standard à un pas échoué : réessayer
+    //     avec un dt plus petit, ce qu'un état détruit interdirait ;
+    //   * c'est la sémantique d'« Abort » : le pas a eu lieu, ou pas.
+    StepResult step(double dt);
 
     // Avance jusqu'à tEnd (dernier pas tronqué pour tomber exactement dessus).
     // Renvoie le nombre de pas effectués.
@@ -157,11 +207,21 @@ public:
 private:
     void applyBoundaryPrimitives();
     void applyBoundaryConserved();
+
+    // POINT UNIQUE d'application de la politique de recovery — toute
+    // conversion U→P du solveur passe par ici, pour qu'il n'existe pas deux
+    // variantes du contrat qui pourraient diverger.
+    // Renvoie false si l'appelant doit ABANDONNER (Abort + échec).
+    bool recoverWithPolicy(int cell, const ConservedState& U, const PrimitiveState& fallback,
+                           PrimitiveState& out, RecoveryStatus& st, bool& usedFallback);
+
     // L(U) : -(F_{i+1/2} - F_{i-1/2})/dx, écrit dans rhs.
-    void computeRHS(const std::vector<ConservedState>& cons,
-                    std::vector<std::array<double, 5>>& rhs);
+    // Renvoie false sous Abort si une conversion échoue : AUCUN flux n'est
+    // alors calculé (a fortiori aucun depuis une primitive périmée).
+    bool computeRHS(const std::vector<ConservedState>& cons,
+                    std::vector<std::array<double, 5>>& rhs, StepResult& res);
     // Reconstruit primitives depuis conservées, applique floors, compte.
-    void recoverPrimitives(std::vector<ConservedState>& cons);
+    bool recoverPrimitives(std::vector<ConservedState>& cons, StepResult& res);
 
     Solver1DConfig cfg_;
     IdealGasEOS    eos_;
@@ -171,6 +231,11 @@ private:
     std::vector<ConservedState> cons_;
     FloorCounters counters_;
     bool ok_ = true;
+
+    // Injection de faute (tests uniquement) — cf. injectRecoveryFaultForTest.
+    int faultStage_ = 0;
+    int faultCell_  = -1;
+    int curStage_   = 0;   // étage SSPRK2 en cours d'exécution
 };
 
 }  // namespace grmhd
