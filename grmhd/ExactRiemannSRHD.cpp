@@ -17,17 +17,65 @@ double soundSpeed(double rho, double p, double g) {
     return std::sqrt(std::max(cs2, 0.0));
 }
 
-// --- Branche DÉTENTE ---------------------------------------------------------
-// Intègre  dv/(1-v²) = ∓ dp/(ρ h c_s)  le long de l'isentrope.
-// `sign` = -1 : onde gauche (détente se propageant vers -x) ; +1 : onde droite.
-// Pour l'onde gauche, quand p décroît, v augmente ; l'inverse pour la droite.
-double rarefactionVelocity(const RiemannState& pre, double pPost, double g, int sign) {
+// --- Branche DÉTENTE, FORME ANALYTIQUE (Γ-law) -------------------------------
+//
+// La quadrature numérique est ÉVITABLE : pour une Γ-law, l'invariant de
+// Riemann relativiste s'intègre en forme close. Dérivation (faite ici, pas
+// recopiée) — en posant s = c_s² et w = p/ρ le long de l'isentrope ρ ∝ p^{1/Γ} :
+//
+//   h    = 1 + Γw/(Γ-1)  et  c_s² = Γw/h   =>   h = (Γ-1)/(Γ-1-s)
+//   dp/ρ = [Γ/(Γ-1)] dw   et   dw/ds = (Γ-1)²/(Γ(Γ-1-s)²)
+//   d'où   dp/(ρ h c_s) = ds/((Γ-1-s) c_s) = 2 dc_s/(Γ-1-c_s²)
+//
+// L'EDO  dv/(1-v²) = sign · dp/(ρ h c_s)  devient donc exactement
+//   d[½ ln((1+v)/(1-v))] = sign · d[g(c_s)] ,
+//   g(c) = (1/√(Γ-1)) ln[(√(Γ-1)+c)/(√(Γ-1)-c)]
+// et s'intègre en
+//   (1+v)/(1-v) = [(1+v_K)/(1-v_K)] · exp( 2·sign·[g(c_s) - g(c_K)] ).
+//
+// Cette forme est exacte à la précision machine : elle rend l'oracle
+// véritablement EXACT, sans erreur de quadrature à quantifier.
+// La version RK4 est conservée ci-dessous UNIQUEMENT comme contre-vérification
+// indépendante (deux dérivations distinctes doivent converger l'une vers
+// l'autre) — cf. l'étude de convergence dans les tests.
+double riemannG(double c, double g) {
+    const double a = std::sqrt(g - 1.0);
+    // Garde-fou mathématique : c_s < √(Γ-1) est la borne physique du son pour
+    // une Γ-law (c_s² = Γ(Γ-1)w/((Γ-1)+Γw) → Γ-1 quand w → ∞).
+    const double cc = std::min(c, a * (1.0 - 1e-15));
+    return (1.0 / a) * std::log((a + cc) / (a - cc));
+}
+
+}  // namespace   (fin du bloc interne : les deux formulations de détente
+   //               ci-dessous sont exposées pour l'étude de convergence)
+
+double rarefactionVelocityAnalytic(const RiemannState& pre, double pPost,
+                                   double g, int sign) {
+    if (pPost >= pre.p) return pre.v;
+    const double rhoP = pre.rho * std::pow(pPost / pre.p, 1.0 / g);
+    const double cK = soundSpeed(pre.rho, pre.p, g);
+    const double cP = soundSpeed(rhoP, pPost, g);
+
+    const double AK = (1.0 + pre.v) / (1.0 - pre.v);
+    const double A = AK * std::exp(2.0 * static_cast<double>(sign)
+                                   * (riemannG(cP, g) - riemannG(cK, g)));
+    return (A - 1.0) / (A + 1.0);
+}
+
+// --- Branche DÉTENTE, quadrature RK4 (contre-vérification seulement) ---------
+// Intègre  dv/(1-v²) = sign · dp/(ρ h c_s)  le long de l'isentrope.
+// Le nombre de pas est paramétrable pour permettre l'étude de convergence de
+// l'oracle lui-même (exigence de la revue : ne pas qualifier d'« exact » un
+// résultat dont on n'a pas quantifié l'erreur).
+long long g_rarefactionClampHits = 0;   // le clamp de v ne doit JAMAIS agir
+
+double rarefactionVelocityRK4(const RiemannState& pre, double pPost, double g,
+                              int sign, int N) {
     const double rhoK = pre.rho, pK = pre.p;
     double v = pre.v;
     if (pPost >= pK) return v;      // pas une détente
 
     // Intégration en ln(p) : régulier même si pPost/pK est très petit.
-    const int N = 2000;
     const double lpK = std::log(pK), lpP = std::log(std::max(pPost, 1e-300));
     const double dl = (lpP - lpK) / N;
 
@@ -56,9 +104,20 @@ double rarefactionVelocity(const RiemannState& pre, double pPost, double g, int 
         const double k4 = dvdlp(lp + dl, v + dl * k3);
         v += (dl / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
         lp += dl;
+        // Le clamp est un garde-fou, PAS un mécanisme de fonctionnement : on
+        // compte ses déclenchements pour pouvoir affirmer qu'aucun test ne
+        // passe grâce à lui.
+        if (v < -0.999999999999 || v > 0.999999999999) ++g_rarefactionClampHits;
         v = std::clamp(v, -0.999999999999, 0.999999999999);
     }
     return v;
+}
+
+namespace {
+
+// Point d'entrée utilisé par le solveur : la forme ANALYTIQUE.
+double rarefactionVelocity(const RiemannState& pre, double pPost, double g, int sign) {
+    return rarefactionVelocityAnalytic(pre, pPost, g, sign);
 }
 
 }  // namespace
@@ -258,5 +317,8 @@ RiemannState sampleExactRiemannSRHD(const ExactRiemannSolution& sol,
     out.v = rarefactionVelocity(R, pm, g, +1);
     return out;
 }
+
+long long rarefactionClampHits() { return g_rarefactionClampHits; }
+void resetRarefactionClampHits() { g_rarefactionClampHits = 0; }
 
 }  // namespace grmhd

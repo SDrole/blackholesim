@@ -30,13 +30,19 @@ namespace grmhd {
 // Écrit l'état courant du solveur. Renvoie false en cas d'échec HDF5.
 bool writeSnapshotHDF5(const Solver1D& solver, const std::string& path);
 
-// Relecture minimale (utilisée par les tests : un writer non relu n'est pas
-// un writer testé). Remplit les vecteurs avec les données du fichier.
-bool readSnapshotHDF5(const std::string& path,
-                      std::vector<double>& x,
-                      std::vector<double>& rho,
-                      std::vector<double>& uu,
-                      std::vector<double>& u1,
-                      double& t, int& nx);
+// Contenu relu — COUVRE TOUS les datasets et attributs réellement écrits.
+// Un aller-retour qui ne relit qu'une partie des champs ne teste pas le
+// writer : il teste les champs qu'on a pensé à relire.
+struct SnapshotContents {
+    std::vector<double> x, rho, uu, u1, u2, u3;
+    double t = 0.0;
+    double gam = 0.0;
+    int nx = 0;
+    std::string stage;          // bhsim_stage
+    std::string metric;         // metric
+    std::string absentFields;   // absent_fields
+};
+
+bool readSnapshotHDF5(const std::string& path, SnapshotContents& out);
 
 }  // namespace grmhd

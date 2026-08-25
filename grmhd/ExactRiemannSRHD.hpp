@@ -16,12 +16,17 @@ namespace grmhd {
 // la vitesse derrière l'onde gauche égale celle derrière l'onde droite :
 //        v_L(p*) = v_R(p*)
 //
-// * DÉTENTE : on intègre l'invariant de Riemann différentiel
-//        dv/(1-v²) = ∓ dp/(ρ h c_s)
-//   le long de l'isentrope ρ(p) = ρ_K (p/p_K)^{1/Γ}, par RK4 en ln p.
-//   Choix délibéré d'une INTÉGRATION NUMÉRIQUE plutôt que d'une forme close
-//   mémorisée : la relation différentielle ci-dessus est élémentaire et
-//   vérifiable, une formule fermée transcrite de mémoire ne le serait pas.
+// * DÉTENTE : forme CLOSE, obtenue par intégration analytique de
+//        dv/(1-v²) = sign · dp/(ρ h c_s)
+//   le long de l'isentrope. Pour une Γ-law on montre (dérivation détaillée
+//   dans le .cpp) que dp/(ρhc_s) = 2 dc_s/(Γ-1-c_s²), d'où
+//        (1+v)/(1-v) = [(1+v_K)/(1-v_K)] · exp(2·sign·[g(c_s) - g(c_K)])
+//        g(c) = (1/√(Γ-1)) · ln[(√(Γ-1)+c)/(√(Γ-1)-c)]
+//   Cette forme est exacte à la précision machine : le terme « EXACT » est
+//   donc justifié, sans erreur de quadrature résiduelle.
+//   Une variante RK4 paramétrable est conservée UNIQUEMENT comme
+//   contre-vérification indépendante (deux dérivations distinctes doivent
+//   converger l'une vers l'autre — étude de convergence dans les tests).
 //
 // * CHOC : conditions de Rankine-Hugoniot relativistes via l'adiabatique de
 //   Taub
@@ -67,5 +72,18 @@ struct ShockResult {
     double rhoPost = 0.0, vPost = 0.0, shockSpeed = 0.0;
 };
 ShockResult shockBranch(const RiemannState& pre, double pPost, double gamma, int sign);
+
+// --- Exposés pour l'étude de convergence de l'oracle lui-même ----------------
+// Forme close (celle réellement utilisée par le solveur).
+double rarefactionVelocityAnalytic(const RiemannState& pre, double pPost,
+                                   double gamma, int sign);
+// Quadrature RK4 à N pas — sert UNIQUEMENT à vérifier que la forme close est
+// bien la limite de l'intégration numérique quand N -> ∞.
+double rarefactionVelocityRK4(const RiemannState& pre, double pPost,
+                              double gamma, int sign, int N);
+// Compteur de déclenchements du garde-fou de vitesse dans la quadrature.
+// Doit rester à 0 : aucun test ne doit passer grâce à un clamp.
+long long rarefactionClampHits();
+void resetRarefactionClampHits();
 
 }  // namespace grmhd

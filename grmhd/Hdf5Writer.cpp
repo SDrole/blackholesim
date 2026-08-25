@@ -1,9 +1,13 @@
 #include "Hdf5Writer.hpp"
 
+#ifdef BHSIM_HAVE_HDF5
 #include <hdf5.h>
+#endif
 #include <vector>
 
 namespace grmhd {
+
+#ifdef BHSIM_HAVE_HDF5
 
 namespace {
 
@@ -114,34 +118,66 @@ bool writeSnapshotHDF5(const Solver1D& solver, const std::string& path) {
     return ok;
 }
 
-bool readSnapshotHDF5(const std::string& path,
-                      std::vector<double>& x,
-                      std::vector<double>& rho,
-                      std::vector<double>& uu,
-                      std::vector<double>& u1,
-                      double& t, int& nx) {
+namespace {
+
+bool readStringAttr(hid_t loc, const char* name, std::string& out) {
+    const hid_t attr = H5Aopen(loc, name, H5P_DEFAULT);
+    if (attr < 0) return false;
+    const hid_t stype = H5Tcopy(H5T_C_S1);
+    H5Tset_size(stype, H5T_VARIABLE);
+    char* buf = nullptr;
+    const herr_t st = H5Aread(attr, stype, &buf);
+    if (st >= 0 && buf) { out = buf; H5free_memory(buf); }
+    H5Tclose(stype); H5Aclose(attr);
+    return st >= 0;
+}
+
+}  // namespace
+
+bool readSnapshotHDF5(const std::string& path, SnapshotContents& out) {
     const hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file < 0) return false;
 
     bool ok = true;
     const hid_t prims = H5Gopen2(file, "prims", H5P_DEFAULT);
     if (prims < 0) { H5Fclose(file); return false; }
-    ok = ok && readDataset1D(prims, "RHO", rho);
-    ok = ok && readDataset1D(prims, "UU",  uu);
-    ok = ok && readDataset1D(prims, "U1",  u1);
+    // TOUS les datasets écrits sont relus — sinon l'aller-retour ne prouve
+    // rien sur les champs oubliés.
+    ok = ok && readDataset1D(prims, "RHO", out.rho);
+    ok = ok && readDataset1D(prims, "UU",  out.uu);
+    ok = ok && readDataset1D(prims, "U1",  out.u1);
+    ok = ok && readDataset1D(prims, "U2",  out.u2);
+    ok = ok && readDataset1D(prims, "U3",  out.u3);
     H5Gclose(prims);
 
     const hid_t grid = H5Gopen2(file, "grid", H5P_DEFAULT);
-    if (grid >= 0) { ok = ok && readDataset1D(grid, "x", x); H5Gclose(grid); }
+    if (grid >= 0) { ok = ok && readDataset1D(grid, "x", out.x); H5Gclose(grid); }
     else ok = false;
 
     hid_t attr = H5Aopen(file, "t", H5P_DEFAULT);
-    if (attr >= 0) { H5Aread(attr, H5T_NATIVE_DOUBLE, &t); H5Aclose(attr); } else ok = false;
+    if (attr >= 0) { H5Aread(attr, H5T_NATIVE_DOUBLE, &out.t); H5Aclose(attr); } else ok = false;
+    attr = H5Aopen(file, "gam", H5P_DEFAULT);
+    if (attr >= 0) { H5Aread(attr, H5T_NATIVE_DOUBLE, &out.gam); H5Aclose(attr); } else ok = false;
     attr = H5Aopen(file, "nx", H5P_DEFAULT);
-    if (attr >= 0) { H5Aread(attr, H5T_NATIVE_INT, &nx); H5Aclose(attr); } else ok = false;
+    if (attr >= 0) { H5Aread(attr, H5T_NATIVE_INT, &out.nx); H5Aclose(attr); } else ok = false;
+
+    // Attributs structurants : ils portent l'information « ce fichier n'est
+    // PAS un snapshot iharm complet », donc ils doivent survivre au round-trip.
+    ok = ok && readStringAttr(file, "bhsim_stage", out.stage);
+    ok = ok && readStringAttr(file, "metric", out.metric);
+    ok = ok && readStringAttr(file, "absent_fields", out.absentFields);
 
     H5Fclose(file);
     return ok;
 }
+
+#else   // BHSIM_HAVE_HDF5 non defini
+
+// HDF5 indisponible a la configuration : on expose des stubs qui ECHOUENT
+// explicitement plutot que de pretendre avoir serialise quoi que ce soit.
+bool writeSnapshotHDF5(const Solver1D&, const std::string&) { return false; }
+bool readSnapshotHDF5(const std::string&, SnapshotContents&) { return false; }
+
+#endif  // BHSIM_HAVE_HDF5
 
 }  // namespace grmhd
