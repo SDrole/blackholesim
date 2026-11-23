@@ -344,8 +344,8 @@ void testChristoffelFailureContract() {
         for (int i = 0; i < 4; ++i)
             for (int j = 0; j < 4; ++j)
                 maxG = std::max(maxG, std::fabs(G[l][i][j]));
-    reportBool("H1a point KS valide -> succes", okValid);
-    reportBool("H1b Gamma non trivial en point valide", maxG > 1e-6);
+    reportBool("H1a valid KS point -> success", okValid);
+    reportBool("H1b Gamma is non-trivial at a valid point", maxG > 1e-6);
 
     struct Bad { const char* label; double r, th; };
     const Bad bad[] = {
