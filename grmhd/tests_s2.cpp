@@ -110,7 +110,7 @@ void runRoundTrip(RegimeStats& st, const IdealGasEOS& eos,
             if (st.algoFailures == 0 && st.conditioningLimited == 0) {
                 // Capture du PREMIER cas en echec : diagnostic, pas devinette.
                 const double W0 = lorentzFactor(P0);
-                std::printf("         [1er echec de ce regime] rho=%.6e u=%.6e u/rho=%.2e W=%.6e\n"
+                std::printf("         [first failure in this regime] rho=%.6e u=%.6e u/rho=%.2e W=%.6e\n"
                             "            D=%.10e tau=%.10e |S|=%.10e  E-|S|=%.3e  raison=%s\n",
                             P0.rho, P0.u, P0.u / P0.rho, W0, U.D, U.tau,
                             std::sqrt(U.S[0]*U.S[0]+U.S[1]*U.S[1]+U.S[2]*U.S[2]),
@@ -194,10 +194,10 @@ void testRoundTripByRegime() {
                             toString(static_cast<RecoveryFailure>(i)), agg[i]);
     }
 
-    report("A1 round-trip : rho et vitesse sur tous les regimes", worstAll, 1e-9);
-    reportBool("A2a AUCUN echec algorithmique (bracket/convergence)",
+    report("A1 round trip: rho and velocity across all regimes", worstAll, 1e-9);
+    reportBool("A2a NO algorithmic failures (bracketing/convergence)",
                totalAlgo == 0,
-               totalAlgo == 0 ? "0 echec algorithmique" : "echecs algorithmiques presents");
+               totalAlgo == 0 ? "0 algorithmic failures" : "algorithmic failures present");
     std::printf("       -> %lld cas signales 'coldAtMachinePrecision' : succes NON FATAL\n"
                 "          (converged=true, failure=None, u=0 = meilleur etat\n"
                 "          representable). Comptabilises pour que S3 decide de sa\n"
@@ -239,7 +239,7 @@ void testInternalEnergyConditioning() {
            worstWellConditioned, 1e-10);
     std::printf("       -> DOMAINE MAL CONDITIONNE DOCUMENTE (non masque) : fluide tres\n"
                 "          froid (u/rho <~ 1e-8) a W eleve. Inherent a la formulation\n"
-                "          conservative (u = difference de grands termes), pas un bug.\n");
+                "          conservative representation (u = difference of large terms), not an algorithmic bug.\n");
 }
 
 // =============================================================================
@@ -446,7 +446,7 @@ void testLongDoubleReference() {
         if (kappa > 1e10) { worstUillCond = std::max(worstUillCond, eU); ++illConditioned; }
     }
     std::printf("       %d cas compares a la reference long double (bisection pure,\n"
-                "       algebre naive conservee pour l'independance)\n", compared);
+                "       naive algebra retained for independence)\n", compared);
     report("B3a rho vs reference long double", worstRho, 1e-11);
     report("B3c W   vs reference long double", worstW,   1e-11);
     // Le critere porte sur le RAPPORT observe/predit : l'erreur doit rester
@@ -504,9 +504,9 @@ void testRejectionOfInvalidStates() {
     ConservedState u4; u4.D = 1.0; u4.tau = -0.9999;                  // E < D, pas d'energie
 
     const Case cases[] = {
-        {"densite negative D<0",            u1, RecoveryFailure::NonPositiveDensity},
+        {"negative density D<0",            u1, RecoveryFailure::NonPositiveDensity},
         {"moment > energie (|S|>E)",        u2, RecoveryFailure::EnergyBelowMomentum},
-        {"entree NaN",                      u3, RecoveryFailure::NonFiniteInput},
+        {"NaN input",                      u3, RecoveryFailure::NonFiniteInput},
         {"energie insuffisante",            u4, RecoveryFailure::UnphysicalResult},
     };
     std::printf("       rejet des etats conserves inadmissibles :\n");
@@ -552,7 +552,7 @@ void testNearAdmissibilityBoundary() {
     }
     std::printf("       frontiere d'admissibilite : %lld cas, %lld converges, "
                 "%d iterations max, residu max %.2e\n", n, ok, maxIters, worstResidual);
-    reportBool("C3a aucun etat non physique retourne pres de la frontiere",
+    reportBool("C3a no unphysical state returned near the boundary",
                unphysical == 0);
     reportBool("C3b convergence sur toute la frontiere testee", ok == n);
 }
@@ -616,11 +616,11 @@ void testColdIndistinguishability() {
     reportBool("D1 existence d'un domaine strictement indistinguable",
                foundIdentical,
                foundIdentical ? "des etats u>0 donnent un U bit-a-bit identique a u=0"
-                              : "aucun cas identique trouve dans la plage testee");
+                              : "no bit-identical case found in tested range");
     std::printf("       -> CONCLUSION : pour delta/rho <= %.0e (dans la plage testee),\n"
                 "          U(u=delta) est BIT A BIT identique a U(u=0). La distinction\n"
                 "          est donc MATHEMATIQUEMENT IMPOSSIBLE apres conversion en\n"
-                "          double : ce n'est pas une limite de notre inversion. Le\n"
+                "          double : this is not a limitation of the inversion algorithm. The\n"
                 "          recovery retourne u=0 (meilleur etat representable) et pose\n"
                 "          coldAtMachinePrecision pour que S3 le sache.\n",
                 largestIndistinguishable);
@@ -677,7 +677,7 @@ void testColdFlagSemantics() {
         if (st.coldAtMachinePrecision) ++flagged;
     }
     reportBool("D2c etat sous le seuil : succes non fatal, signale", okSub && flagged > 0);
-    std::printf("       -> le drapeau est un DIAGNOSTIC, pas un echec : converged=true,\n"
+    std::printf("       -> the flag is a DIAGNOSTIC, not a failure: converged=true,\n"
                 "          failure=None. S3 pourra compter ces cellules et decider.\n");
 }
 
@@ -686,7 +686,7 @@ void testColdFlagSemantics() {
 int main() {
     std::printf("=====================================================================\n");
     std::printf("  S2 : primitives <-> conservees, HYDRODYNAMIQUE RELATIVISTE PURE\n");
-    std::printf("       (aucun champ magnetique a ce stade)\n");
+    std::printf("       (no magnetic field at this stage)\n");
     std::printf("=====================================================================\n");
 
     std::printf("\n  BLOC A -- round-trip massif et conditionnement\n");
@@ -712,7 +712,7 @@ int main() {
     if (g_failures == 0)
         std::printf("  S2 VALIDE -- inversion hydro robuste, S3 peut demarrer.\n");
     else
-        std::printf("  %d ECHEC(S) -- S2 NON valide, ne pas demarrer S3.\n", g_failures);
+        std::printf("  %d FAILURE(S) -- S2 is NOT validated; do not start S3.\n", g_failures);
     std::printf("=====================================================================\n");
     return g_failures == 0 ? 0 : 1;
 }
