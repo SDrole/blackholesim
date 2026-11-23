@@ -16,7 +16,7 @@ using namespace bhsim;
 
 namespace {
 
-// Dispatch du rendu : GPU (CUDA) si disponible à la compilation, sinon CPU.
+// Render dispatch: CUDA when compiled in, otherwise the CPU path.
 RenderResult renderDispatch(const Renderer& renderer) {
 #ifdef BHSIM_CUDA
     return renderer.renderGPU();
@@ -25,7 +25,7 @@ RenderResult renderDispatch(const Renderer& renderer) {
 #endif
 }
 
-// Rayon du pic du flux de Page-Thorne (référence pour la vitesse de rotation).
+// Radius of the Page-Thorne flux peak, used as the animation rotation reference.
 double diskPeakRadius(const Kerr& bh, const Config& cfg) {
     const double rin = bh.iscoPrograde();
     double best = rin * 1.5, fmax = -1.0;
@@ -38,10 +38,9 @@ double diskPeakRadius(const Kerr& bh, const Config& cfg) {
     return best;
 }
 
-// --- Mode animation : séquence d'images frame_NNN.bmp ------------------------
-// Le disque tourne à la vitesse képlérienne relativiste (via la phase t) et la
-// caméra dérive légèrement sur son orbite ZAMO (azimut). Boucle exploitable en
-// vidéo (ffmpeg -i frame_%03d.bmp ... ).
+// Animation mode: frame_NNN.bmp sequence.
+// The disk evolves at the relativistic Keplerian rate while the camera drifts
+// in azimuth. The resulting frames can be assembled with ffmpeg.
 int runAnimation(Config cfg, const Kerr& bh) {
     const std::filesystem::path dir = std::filesystem::path(cfg.outputDir) / "frames";
     std::error_code ec;
@@ -50,22 +49,22 @@ int runAnimation(Config cfg, const Kerr& bh) {
     const int frames = std::max(1, cfg.animFrames);
     const double rPeak = diskPeakRadius(bh, cfg);
     const double OmegaPeak = bh.orbitalOmega(rPeak);
-    const double Ttotal = cfg.animDiskTurns * 2.0 * kPi / OmegaPeak;   // durée (en M)
+    const double Ttotal = cfg.animDiskTurns * 2.0 * kPi / OmegaPeak;
     const double azTotal = cfg.animCameraOrbitDeg * kPi / 180.0;
 
-    std::cout << "  Mode ANIMATION : " << frames << " images\n"
-              << "  Rayon de pic r* = " << rPeak << "  ->  Ω(r*) = " << OmegaPeak << "\n"
-              << "  Durée séquence  = " << Ttotal << " M  (" << cfg.animDiskTurns
-              << " tour(s) képlérien(s) au pic)\n"
-              << "  Orbite caméra   = " << cfg.animCameraOrbitDeg << " deg\n"
+    std::cout << "  Animation mode: " << frames << " frames\n"
+              << "  Peak radius r*  = " << rPeak << "  ->  Omega(r*) = " << OmegaPeak << "\n"
+              << "  Sequence time   = " << Ttotal << " M  (" << cfg.animDiskTurns
+              << " Keplerian turn(s) at the peak)\n"
+              << "  Camera orbit    = " << cfg.animCameraOrbitDeg << " deg\n"
               << "--------------------------------------------------\n";
 
-    Renderer renderer(cfg);   // LUT Planck + texture ciel partagées sur la séquence
+    Renderer renderer(cfg);
 
     const auto t0 = std::chrono::steady_clock::now();
     double maxDrift = 0.0;
     for (int f = 0; f < frames; ++f) {
-        const double u = static_cast<double>(f) / frames;   // [0,1)
+        const double u = static_cast<double>(f) / frames;
         renderer.setFrame(Ttotal * u, azTotal * u);
 
         const RenderResult res = renderDispatch(renderer);
@@ -77,15 +76,15 @@ int runAnimation(Config cfg, const Kerr& bh) {
         if (res.image.writeBMP(path))
             std::cout << "  [" << (f + 1) << "/" << frames << "] -> " << path << "\n";
         else
-            std::cerr << "  ECHEC ecriture " << path << "\n";
+            std::cerr << "  Failed to write " << path << "\n";
     }
     const auto t1 = std::chrono::steady_clock::now();
 
     std::cout << "--------------------------------------------------\n"
-              << "  Séquence terminée en "
+              << "  Sequence completed in "
               << std::chrono::duration<double>(t1 - t0).count() << " s\n"
-              << "  Dérive max de Carter sur la séquence : " << maxDrift << "\n"
-              << "  Assemblage vidéo (exemple) :\n"
+              << "  Maximum Carter drift over sequence: " << maxDrift << "\n"
+              << "  Example video assembly command:\n"
               << "    ffmpeg -framerate 30 -i " << (dir / "frame_%03d.bmp").string()
               << " -c:v libx264 -pix_fmt yuv420p blackhole.mp4\n";
     return 0;
@@ -93,24 +92,24 @@ int runAnimation(Config cfg, const Kerr& bh) {
 
 void printBanner(const Config& cfg, const Kerr& bh) {
     std::cout << "==================================================\n"
-              << "  Simulateur de trou noir de Kerr (en rotation)\n"
-              << "  géodésiques nulles, hamiltonien canonique, G = c = 1\n"
+              << "  Kerr black hole simulator\n"
+              << "  null geodesics, canonical Hamiltonian, G = c = 1\n"
               << "==================================================\n"
-              << "  Masse M            : " << bh.mass() << "\n"
+              << "  Mass M             : " << bh.mass() << "\n"
               << "  Spin a/M           : " << bh.spinStar()
               << "   (a = " << bh.spin() << ")\n"
-              << "  Horizon externe r+ : " << bh.horizonOuter() << "\n"
-              << "  Horizon interne r- : " << bh.horizonInner() << "\n"
-              << "  Ergosphère (éq.)   : " << bh.ergosphereEquator() << "\n"
-              << "  ISCO (prograde)    : " << bh.iscoPrograde() << "\n"
+              << "  Outer horizon r+   : " << bh.horizonOuter() << "\n"
+              << "  Inner horizon r-   : " << bh.horizonInner() << "\n"
+              << "  Equatorial ergosphere: " << bh.ergosphereEquator() << "\n"
+              << "  Prograde ISCO      : " << bh.iscoPrograde() << "\n"
               << "  Image              : " << cfg.width << " x " << cfg.height
               << "   (" << cfg.samples << "x" << cfg.samples << " AA)\n"
-              << "  Disque (N.-Thorne) : r ∈ [" << bh.iscoPrograde() << ", "
+              << "  N.-Thorne disk     : r in [" << bh.iscoPrograde() << ", "
               << cfg.diskOuter << "]\n"
 #ifdef BHSIM_CUDA
-              << "  Backend            : GPU (CUDA, RKF45 parallèle)\n"
+              << "  Backend            : GPU (CUDA, parallel RKF45)\n"
 #else
-              << "  Backend            : CPU" << "\n"
+              << "  Backend            : CPU\n"
 #endif
               << "--------------------------------------------------\n";
 }
@@ -120,10 +119,10 @@ void printBanner(const Config& cfg, const Kerr& bh) {
 int main(int argc, char** argv) {
     Config cfg;
 
-    // Mode animation :
-    //   blackholesim anim [images] [spin a/M] [dossier_sortie] [largeur] [hauteur] [AA]
-    // Image fixe :
-    //   blackholesim [largeur] [hauteur] [AA] [spin a/M] [dossier_sortie]
+    // Animation:
+    //   blackholesim anim [frames] [spin a/M] [output_dir] [width] [height] [AA]
+    // Still image:
+    //   blackholesim [width] [height] [AA] [spin a/M] [output_dir]
     if (argc >= 2 && std::strcmp(argv[1], "anim") == 0) {
         cfg.animate = true;
         if (argc >= 3) cfg.animFrames = std::max(1, std::atoi(argv[2]));
@@ -138,7 +137,6 @@ int main(int argc, char** argv) {
         return runAnimation(cfg, bh);
     }
 
-    // CLI :  blackholesim [largeur] [hauteur] [AA] [spin a/M] [dossier_sortie]
     if (argc >= 2) cfg.width   = std::max(1, std::atoi(argv[1]));
     if (argc >= 3) cfg.height  = std::max(1, std::atoi(argv[2]));
     if (argc >= 4) cfg.samples = std::max(1, std::atoi(argv[3]));
@@ -156,14 +154,14 @@ int main(int argc, char** argv) {
     const auto t0 = std::chrono::steady_clock::now();
     const RenderResult res = renderDispatch(renderer);
     const auto t1 = std::chrono::steady_clock::now();
-    std::cout << "  Rendu terminé en "
+    std::cout << "  Render completed in "
               << std::chrono::duration<double>(t1 - t0).count() << " s\n";
 
-    // Vérification de la constante de Carter.
+    // Carter-constant validation.
     const bool carterOK = res.maxCarterDrift < cfg.carterTolerance;
-    std::cout << "  Constante de Carter K : dérive max = " << res.maxCarterDrift
+    std::cout << "  Carter constant K: max drift = " << res.maxCarterDrift
               << "  (tol " << cfg.carterTolerance << ")  ->  "
-              << (carterOK ? "CONSERVÉE [OK]" : "DÉRIVE [!]") << "\n"
+              << (carterOK ? "CONSERVED [OK]" : "DRIFT [!]") << "\n"
               << "--------------------------------------------------\n";
 
     const std::filesystem::path dir(cfg.outputDir);
@@ -181,14 +179,14 @@ int main(int argc, char** argv) {
         const auto fHit = (dir / "hit_type.csv").string();
         const auto fCar = (dir / "carter_drift.csv").string();
         if (writeMatrixCSV(fRed, res.redshift, res.width, res.height))
-            { std::cout << "  -> " << fRed << "  (facteur g du disque)\n"; ++written; }
+            { std::cout << "  -> " << fRed << "  (disk redshift factor g)\n"; ++written; }
         if (writeMatrixCSV(fHit, res.hitType, res.width, res.height))
-            { std::cout << "  -> " << fHit << "  (0=fond 1=disque 2=horizon)\n"; ++written; }
+            { std::cout << "  -> " << fHit << "  (0=background 1=disk 2=horizon)\n"; ++written; }
         if (writeMatrixCSV(fCar, res.carterDrift, res.width, res.height))
-            { std::cout << "  -> " << fCar << "  (dérive relative de K)\n"; ++written; }
+            { std::cout << "  -> " << fCar << "  (relative Carter drift)\n"; ++written; }
     }
 
     std::cout << "--------------------------------------------------\n"
-              << "  " << written << " fichier(s) écrit(s) dans '" << cfg.outputDir << "'.\n";
+              << "  " << written << " file(s) written to '" << cfg.outputDir << "'.\n";
     return written > 0 ? 0 : 1;
 }
