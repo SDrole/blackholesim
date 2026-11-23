@@ -92,7 +92,7 @@ bool writeSnapshotHDF5(const Solver1D& solver, const std::string& path) {
     const hid_t prims = H5Gcreate2(file, "prims", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     if (prims < 0) { H5Fclose(file); return false; }
 
-    // Noms alignés sur la convention iharm (RHO, UU, U1..U3).
+    // Dataset names follow the iharm convention.
     ok = ok && writeDataset1D(prims, "RHO", rho);
     ok = ok && writeDataset1D(prims, "UU",  uu);
     ok = ok && writeDataset1D(prims, "U1",  u1);
@@ -108,7 +108,7 @@ bool writeSnapshotHDF5(const Solver1D& solver, const std::string& path) {
     ok = ok && writeIntAttr(file, "nx", nx);
     ok = ok && writeScalarAttr(file, "gam", solver.config().gamma);
 
-    // Marqueurs d'honnêteté : ce fichier N'EST PAS un snapshot GRMHD.
+    // Provenance markers: this file is explicitly NOT a full GRMHD snapshot.
     ok = ok && writeStringAttr(file, "bhsim_stage", "S3-SRHD-flat");
     ok = ok && writeStringAttr(file, "metric", "minkowski-cartesian-1d");
     ok = ok && writeStringAttr(file, "absent_fields",
@@ -141,8 +141,9 @@ bool readSnapshotHDF5(const std::string& path, SnapshotContents& out) {
     bool ok = true;
     const hid_t prims = H5Gopen2(file, "prims", H5P_DEFAULT);
     if (prims < 0) { H5Fclose(file); return false; }
-    // TOUS les datasets écrits sont relus — sinon l'aller-retour ne prouve
-    // rien sur les champs oubliés.
+
+    // Read back every dataset that was written. Otherwise the round trip does
+    // not test fields the reader forgot about.
     ok = ok && readDataset1D(prims, "RHO", out.rho);
     ok = ok && readDataset1D(prims, "UU",  out.uu);
     ok = ok && readDataset1D(prims, "U1",  out.u1);
@@ -161,8 +162,8 @@ bool readSnapshotHDF5(const std::string& path, SnapshotContents& out) {
     attr = H5Aopen(file, "nx", H5P_DEFAULT);
     if (attr >= 0) { H5Aread(attr, H5T_NATIVE_INT, &out.nx); H5Aclose(attr); } else ok = false;
 
-    // Attributs structurants : ils portent l'information « ce fichier n'est
-    // PAS un snapshot iharm complet », donc ils doivent survivre au round-trip.
+    // Structural attributes carry the "this is not a complete iharm snapshot"
+    // contract, so they must survive the round trip too.
     ok = ok && readStringAttr(file, "bhsim_stage", out.stage);
     ok = ok && readStringAttr(file, "metric", out.metric);
     ok = ok && readStringAttr(file, "absent_fields", out.absentFields);
@@ -171,10 +172,10 @@ bool readSnapshotHDF5(const std::string& path, SnapshotContents& out) {
     return ok;
 }
 
-#else   // BHSIM_HAVE_HDF5 non defini
+#else   // BHSIM_HAVE_HDF5 not defined
 
-// HDF5 indisponible a la configuration : on expose des stubs qui ECHOUENT
-// explicitement plutot que de pretendre avoir serialise quoi que ce soit.
+// HDF5 is unavailable in this build. Expose explicit failing stubs rather than
+// pretending that anything was serialized.
 bool writeSnapshotHDF5(const Solver1D&, const std::string&) { return false; }
 bool readSnapshotHDF5(const std::string&, SnapshotContents&) { return false; }
 
