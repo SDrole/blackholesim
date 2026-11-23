@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use blackholesim in research, please cite the repository and the relevant physical/numerical references listed in the documentation."
+title: "blackholesim"
+type: software
+authors:
+  - family-names: "SDrole"
+repository-code: "https://github.com/SDrole/blackholesim"
+url: "https://github.com/SDrole/blackholesim"
+license: "proprietary"
+version: "0.0.0-dev"
+date-released: 2026-11-23
+keywords:
+  - black-hole
+  - Kerr
+  - ray-tracing
+  - general-relativity
+  - relativistic-hydrodynamics
+  - GRMHD
