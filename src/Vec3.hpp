@@ -5,8 +5,7 @@
 namespace bhsim {
 
 // -----------------------------------------------------------------------------
-// Vecteur 3D (double précision). Algèbre vectorielle inline pour la performance :
-// ces opérations sont appelées des milliards de fois dans la boucle de rendu.
+// Double-precision 3D vector. Inline operations are used in the hot rendering loop.
 // -----------------------------------------------------------------------------
 struct Vec3 {
     double x = 0.0, y = 0.0, z = 0.0;
@@ -35,7 +34,7 @@ struct Vec3 {
 
 inline Vec3 operator*(double s, const Vec3& v) { return v * s; }
 
-// Interpolation linéaire (utilisée pour les dégradés et les croisements de disque).
+// Linear interpolation used by gradients and disk-crossing calculations.
 inline Vec3 lerp(const Vec3& a, const Vec3& b, double t) { return a + (b - a) * t; }
 
 std::ostream& operator<<(std::ostream& os, const Vec3& v);

@@ -3,44 +3,44 @@
 namespace grmhd {
 
 // -----------------------------------------------------------------------------
-// Métrique de Kerr en coordonnées de KERR-SCHILD sphériques (t, r, θ, φ).
+// Kerr metric in spherical KERR-SCHILD coordinates (t, r, theta, phi).
 //
-// POURQUOI Kerr-Schild et pas Boyer-Lindquist (utilisé par le ray tracer) :
-// BL est singulier à l'horizon (g_rr → ∞ quand Δ → 0), ce qui interdit de
-// faire évoluer un fluide à travers l'horizon. Kerr-Schild est régulier
-// partout sauf sur la singularité annulaire physique : c'est la forme
-// standard des solveurs GRMHD (HARM, iharm3D, Athena++, BHAC…), qui placent
-// leur frontière interne À L'INTÉRIEUR de l'horizon.
+// WHY Kerr-Schild instead of Boyer-Lindquist (used by the ray tracer):
+// BL is singular at the horizon (g_rr -> infinity as Delta -> 0), which makes
+// it unsuitable for evolving fluid through the horizon. Kerr-Schild remains
+// regular everywhere except the physical ring singularity. This is the
+// standard choice in GRMHD codes such as HARM, iharm3D, Athena++ and BHAC,
+// which place their inner boundary inside the horizon.
 //
-// Convention de signature : (-, +, +, +). Unités géométrisées G = c = 1.
-// Indices : 0 = t, 1 = r, 2 = θ, 3 = φ.
+// Signature convention: (-,+,+,+). Geometrized units G=c=1.
+// Indices: 0=t, 1=r, 2=theta, 3=phi.
 //
-// Σ = r² + a²cos²θ ,  Δ = r² - 2Mr + a²
+// Sigma = r^2 + a^2 cos^2(theta), Delta = r^2 - 2Mr + a^2
 //
-// Composantes covariantes non nulles :
-//   g_tt = -(1 - 2Mr/Σ)          g_tr = 2Mr/Σ
-//   g_tφ = -2Mar sin²θ/Σ         g_rr = 1 + 2Mr/Σ
-//   g_rφ = -a sin²θ (1 + 2Mr/Σ)  g_θθ = Σ
-//   g_φφ = sin²θ [Σ + a² sin²θ (1 + 2Mr/Σ)]
+// Non-zero covariant components:
+//   g_tt   = -(1 - 2Mr/Sigma)          g_tr   = 2Mr/Sigma
+//   g_tphi = -2Mar sin^2(theta)/Sigma  g_rr   = 1 + 2Mr/Sigma
+//   g_rphi = -a sin^2(theta)(1+2Mr/Sigma)
+//   g_thetatheta = Sigma
+//   g_phiphi = sin^2(theta)[Sigma + a^2 sin^2(theta)(1+2Mr/Sigma)]
 //
-// Résultat analytique exact utilisé comme test indépendant : √-g = Σ sinθ.
+// Exact analytic result used as an independent check: sqrt(-g)=Sigma sin(theta).
 // -----------------------------------------------------------------------------
 
 struct Metric4 {
-    double g[4][4]    = {};   // covariant   g_μν
-    double ginv[4][4] = {};   // contravariant g^μν
-    double sqrtNegG   = 0.0;  // √(-det g)
+    double g[4][4]    = {};   // covariant g_mu_nu
+    double ginv[4][4] = {};   // contravariant g^mu_nu
+    double sqrtNegG   = 0.0;  // sqrt(-det g)
 };
 
-// Cœur de la métrique, templaté sur le type scalaire et paramétré par
-// (sinθ, cosθ) plutôt que par θ. Deux raisons :
-//   * le plancher sur |sinθ| (singularité de coordonnées sur l'axe) reste à
-//     la charge de l'appelant, ce qui garde ce cœur analytique pur ;
-//   * il devient instanciable en std::complex, ce qui permet la
-//     DIFFÉRENTIATION PAR PAS COMPLEXE  f'(x) ≈ Im[f(x+ih)]/h  — exacte à la
-//     précision machine (aucune soustraction, donc aucune annulation
-//     catastrophique), utilisée comme référence indépendante pour valider le
-//     schéma de différences finies des Christoffels.
+// Analytic metric kernel templated on scalar type and parameterized by
+// (sin(theta), cos(theta)) rather than theta itself.
+//
+// This keeps the polar-axis floor outside the analytic core and allows the
+// function to be instantiated with std::complex for complex-step
+// differentiation: f'(x) ~= Im[f(x+ih)]/h. Because it avoids subtraction,
+// complex-step differentiation provides an independent near-machine-precision
+// reference for validating the finite-difference Christoffel derivatives.
 template <typename T>
 void metricFromTrig(const T& r, const T& st, const T& ct,
                     const T& M, const T& a, T g[4][4]) {
@@ -74,49 +74,47 @@ public:
     double mass() const { return M_; }
     double spin() const { return a_; }
 
-    // DOMAINE ADMIS : M > 0 et |a| <= M. Le cas extrémal |a| = M est ADMIS
-    // (r+ = r- = M) ; |a| > M est une singularité nue, donc REJETÉ.
+    // Supported Kerr domain: M>0 and |a|<=M. The extremal case |a|=M is
+    // valid; |a|>M is a naked singularity and is rejected.
     bool parametersValid() const;
 
-    // Rayons des horizons : r± = M ± √(M² - a²).
-    // Renvoie false hors domaine, plutôt que de renvoyer silencieusement le
-    // cas extrémal pour une singularité nue. Forme à préférer.
+    // Horizon radii r+/- = M +/- sqrt(M^2-a^2).
+    // Returns false outside the supported Kerr domain.
     bool horizons(double& rPlus, double& rMinus) const;
 
-    // Formes commodes. Hors domaine elles renvoient NaN — un sentinel qui se
-    // propage et casse toute comparaison, au lieu d'une valeur plausible.
-    // Vérifier parametersValid() en amont reste la bonne pratique.
+    // Convenience accessors. Outside the supported domain they return NaN so
+    // an invalid configuration propagates visibly instead of becoming a
+    // plausible horizon value.
     double horizonOuter() const;
     double horizonInner() const;
 
-    // Métrique covariante seule (analytique).
+    // Analytic covariant metric.
     void metricCovariant(double r, double theta, double g[4][4]) const;
 
-    // Métrique complète : covariante + inverse (numérique) + √-g.
-    // L'inverse est calculé par Gauss-Jordan plutôt que par une formule
-    // analytique : moins de risque d'erreur de transcription, et le test
-    // g·g⁻¹ = I valide alors réellement l'inverseur.
+    // Full metric: covariant + numerical inverse + sqrt(-g).
+    // Gauss-Jordan inversion is used instead of a hand-transcribed inverse to
+    // reduce algebraic transcription risk; g*g^-1=I is then a real test of the
+    // inversion routine.
     bool metricAt(double r, double theta, Metric4& out) const;
 
-    // √-g par la formule analytique Σ sinθ (référence de validation).
+    // Analytic sqrt(-g)=Sigma sin(theta), used as an independent reference.
     double sqrtNegGAnalytic(double r, double theta) const;
 
-    // Symboles de Christoffel Γ^λ_μν par différentiation numérique de la
-    // métrique — approche standard des codes HARM : plus robuste que de
-    // transcrire à la main les expressions analytiques (longues et
-    // facilement fausses), et l'erreur de troncature reste très inférieure
-    // aux erreurs du schéma hydrodynamique.
-    //   Γ^λ_μν = ½ g^λσ (∂_μ g_σν + ∂_ν g_σμ - ∂_σ g_μν)
-    // Kerr en KS est stationnaire et axisymétrique : ∂_t g = ∂_φ g = 0,
-    // seules les dérivées ∂_r et ∂_θ sont non nulles.
-    // Renvoie FALSE si la métrique n'a pas pu être inversée en (r, θ) ; Γ est
-    // alors mis à zéro mais l'appelant DOIT tester le retour. Un Γ = 0 silencieux
-    // est de l'espace plat : en S4 il alimenterait les termes source GRHD et
-    // produirait une évolution plausible et fausse.
+    // Christoffel symbols Gamma^lambda_mu_nu from numerical derivatives of the
+    // metric. This is less error-prone than transcribing the full analytic
+    // expressions and its truncation error is well below the hydro scheme's
+    // error scale.
+    //
+    // Kerr in spherical KS is stationary and axisymmetric:
+    // partial_t g = partial_phi g = 0, so only r and theta derivatives remain.
+    //
+    // Returns false if the metric cannot be inverted. Gamma is zero-filled on
+    // failure only to avoid uninitialized output; callers MUST check the
+    // return value. Silent Gamma=0 would mimic flat space and become dangerous
+    // once S4 source terms depend on the connection.
     [[nodiscard]] bool christoffel(double r, double theta, double Gamma[4][4][4]) const;
 
-    // Dérivées ∂_λ g_μν (numériques). Exposé pour le test de compatibilité
-    // métrique ∇_λ g_μν = 0.
+    // Numerical partial_lambda g_mu_nu, exposed for validation.
     void metricDerivatives(double r, double theta, double dg[4][4][4]) const;
 
 private:

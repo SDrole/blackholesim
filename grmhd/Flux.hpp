@@ -5,81 +5,68 @@
 namespace grmhd {
 
 // -----------------------------------------------------------------------------
-// S3 — Flux physiques SRHD 1D et vitesses caractéristiques.
+// S3 — SRHD physical fluxes and characteristic speeds.
 //
-// Espace de Minkowski (α=1, β^i=0, γ_ij=δ_ij), mais AUCUNE de ces formules ne
-// suppose la platitude dans sa structure : elles sont écrites en fonction de
-// (ρ, u, v^i, p, W), de sorte que S4 n'aura qu'à fournir γ_ij/α/β^i pour les
-// généraliser sans réécrire l'interface.
+// Minkowski spacetime here: alpha=1, beta^i=0, gamma_ij=delta_ij. The
+// interface is written in terms of local fluid variables so S4 can generalize
+// it to curved spacetime without replacing the entire solver contract.
 //
-// ---- DÉRIVATION DES FLUX (et non recopie d'un autre code) -------------------
-// Tenseur énergie-impulsion d'un fluide parfait :
-//     T^{μν} = ρ h u^μ u^ν + p g^{μν}
+// Perfect-fluid stress-energy tensor:
+//   T^{mu nu} = rho h u^mu u^nu + p g^{mu nu}
 //
-// Nos conservées (S2, projections eulériennes, non densitisées) :
-//     D   = ρW ,   S_i = ρhW² v_i ,   τ = ρhW² - p - D
+// S2 Valencia conserved variables:
+//   D   = rho W
+//   S_i = rho h W^2 v_i
+//   tau = rho h W^2 - p - D
 //
-// Flux dans la direction x :
-//   * masse   : le flux de D est ρW v^x                    -> F_D = D v^x
-//   * moment  : T^x_i = ρh u^x u_i + p δ^x_i
-//               = ρhW² v^x v_i + p δ^x_i                   -> F_{S_i} = S_i v^x + p δ^x_i
-//   * énergie : la densité d'énergie eulérienne est E = ρhW² - p = τ + D,
-//               son flux est S^x = ρhW² v^x. Le flux de τ = E - D vaut donc
-//               S^x - D v^x = (ρhW² - ρW) v^x = (τ + p) v^x
-//               -> F_τ = (τ + p) v^x   [les deux écritures sont identiques,
-//                                        vérifié dans les tests]
+// Flux in direction x:
+//   F_D     = D v^x
+//   F_{S_i} = S_i v^x + p delta^x_i
+//   F_tau   = (tau+p) v^x = S^x - D v^x
 //
-// Vérification de cohérence avec S2 : au repos (v=0, W=1) on a D=ρ, S_i=0,
-// τ=u, et TOUS les flux s'annulent sauf F_{S_x} = p. C'est exactement la
-// pression qui pousse — testé explicitement.
+// At rest, D=rho, S_i=0 and tau=u. Every flux vanishes except the normal
+// momentum flux, which is exactly the pressure.
 // -----------------------------------------------------------------------------
 
-// Variables primitives « de travail » du solveur : on manipule v^i (et non
-// ũ^i) dans les flux car c'est v^i qui apparaît naturellement dans T^{μν}.
-// La conversion ũ^i <-> v^i est locale et exacte : v^i = ũ^i / W.
+// Working primitive variables used by the flux calculation. Fluxes naturally
+// use v^i rather than u_tilde^i. The conversion is local: v^i=u_tilde^i/W.
 struct FluidVars {
     double rho = 0.0;
-    double u   = 0.0;      // densité d'énergie interne
+    double u   = 0.0;      // internal-energy density
     double v[3] = {0.0, 0.0, 0.0};
     double p   = 0.0;
     double W   = 1.0;
-    double h   = 1.0;      // enthalpie spécifique
-    double cs2 = 0.0;      // vitesse du son au carré
+    double h   = 1.0;      // specific enthalpy
+    double cs2 = 0.0;      // sound speed squared
 };
 
-// Construit les variables de travail à partir des primitives de S2.
+// Build working variables from S2 primitives.
 FluidVars makeFluidVars(const PrimitiveState& P, const IdealGasEOS& eos);
 
-// Flux physique dans la direction `dir` (0=x, 1=y, 2=z).
-// Ordre des composantes : (D, S_x, S_y, S_z, tau).
+// Physical flux in direction dir (0=x,1=y,2=z).
+// Component order: (D,S_x,S_y,S_z,tau).
 void physicalFlux(const FluidVars& f, const ConservedState& U, int dir,
                   double F[5]);
 
 // -----------------------------------------------------------------------------
-// VITESSES CARACTÉRISTIQUES RELATIVISTES
+// RELATIVISTIC CHARACTERISTIC SPEEDS
 //
-// ⚠️ v ± c_s est FAUX en relativité. Deux raisons distinctes :
-//   1. la composition des vitesses n'est pas galiléenne ;
-//   2. en présence de vitesses TRANSVERSES, les valeurs propres dépendent de
-//      v² complet et pas seulement de v^x — un point qu'une simple
-//      substitution « addition relativiste » manquerait.
+// v +/- c_s is wrong in relativity. Velocity composition is non-Galilean and,
+// with transverse motion, eigenvalues depend on the full v^2 rather than only
+// the normal component.
 //
-// Valeurs propres du système SRHD 1D (formulation Valencia) :
-//     λ_0 = v^x                                   (multiplicité 3, ondes
-//                                                  matérielles / contact)
-//     λ_± = [ v^x(1-c_s²) ± c_s √( (1-v²)[1 - v²c_s² - (v^x)²(1-c_s²)] ) ]
-//           / (1 - v² c_s²)
-// avec v² = δ_ij v^i v^j.
+// For 1D SRHD in Valencia form:
+//   lambda_0 = v^x
+//   lambda_+/- =
+//     [v^x(1-c_s^2) +/- c_s sqrt((1-v^2)
+//        [1-v^2 c_s^2-(v^x)^2(1-c_s^2)])]
+//     / (1-v^2 c_s^2)
 //
-// PROVENANCE ET VÉRIFICATION : formulation standard du système SRHD en
-// coordonnées eulériennes (cf. Font, Living Rev. Relativity ; Martí & Müller).
-// Plutôt que de faire confiance à la transcription, les tests vérifient :
-//   * v -> 0        =>  λ_± -> ± c_s
-//   * c_s -> 0      =>  λ_± -> v^x  (advection pure avec le fluide)
-//   * v_transverse = 0 => se réduit à l'addition relativiste
-//                         (v^x ± c_s)/(1 ± v^x c_s)   [identité démontrée
-//                         algébriquement dans les tests]
-//   * |λ| < 1 partout (causalité) sur un large balayage
+// Validation checks include:
+//   * v -> 0: lambda_+/- -> +/-c_s
+//   * c_s -> 0: lambda_+/- -> v^x
+//   * zero transverse velocity: relativistic velocity-addition identity
+//   * |lambda|<1 across a broad physical-state sweep
 // -----------------------------------------------------------------------------
 struct SignalSpeeds {
     double lambdaMinus = 0.0;
@@ -89,17 +76,14 @@ struct SignalSpeeds {
 
 SignalSpeeds characteristicSpeeds(const FluidVars& f, int dir);
 
-// --- Instrumentation des GARDE-FOUS de characteristicSpeeds ------------------
-// Ces clamps sont légitimes en production (ils empêchent un NaN de se propager
-// depuis un état déjà hors domaine), mais en VALIDATION ils pourraient masquer
-// un état non physique et faire passer un test pour la mauvaise raison.
-// On les compte donc, afin de pouvoir DÉMONTRER — et non affirmer — qu'ils ne
-// se déclenchent jamais dans les tests scientifiques.
+// Numerical-guard instrumentation. These clamps are useful as final protection
+// in release code, but validation must demonstrate that scientific tests do
+// not pass because the guards modified the physics.
 struct CharacteristicClampCounters {
-    long long cs2Clamped     = 0;   // c_s² ramené dans [0,1]
-    long long discNegative   = 0;   // radicande < 0 -> racine forcée à 0
-    long long denomDegenerate = 0;  // 1 - v²c_s² ~ 0 (exige v² = c_s² = 1)
-    long long lambdaClamped  = 0;   // |λ| > 1 ramené dans [-1,1]
+    long long cs2Clamped      = 0;  // cs^2 clamped to [0,1]
+    long long discNegative    = 0;  // negative radicand -> zero root
+    long long denomDegenerate = 0;  // 1-v^2 cs^2 ~ 0
+    long long lambdaClamped   = 0;  // |lambda| clamped to <=1
     long long total() const {
         return cs2Clamped + discNegative + denomDegenerate + lambdaClamped;
     }

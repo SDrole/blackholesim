@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible software, numerical, or physics bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue. For scientific/numerical discrepancies, include an independent reason the current result is wrong whenever possible.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Full or short Git commit hash where the issue occurs.
+      placeholder: e52fbaf
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal steps, inputs, configuration, and command.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Independent evidence
+      description: Analytic solution, invariant, published value, symmetry argument, independent code, etc.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, compiler, CUDA/GPU if relevant, CMake configuration.

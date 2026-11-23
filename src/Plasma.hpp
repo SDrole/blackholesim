@@ -3,33 +3,29 @@
 namespace bhsim {
 
 // -----------------------------------------------------------------------------
-// État local du plasma en un point de l'espace-temps — interface commune entre
-// le backend procédural actuel (texture MHD stylisée, cf. Renderer.cpp) et un
-// futur backend GRMHD (ingestion de snapshots réels au format iharm HDF5).
-// Voir docs/SESSION_LOG_AND_ROADMAP.md pour le plan complet (Track A/B).
+// Local plasma state at one spacetime point. This is the shared interface
+// between the current procedural backend and a future GRMHD snapshot backend.
 //
-// Toutes les grandeurs sont en unités géométrisées (G = c = 1), cohérentes
-// avec le reste du moteur. Un backend GRMHD futur peuplera ces mêmes champs
-// par interpolation dans un cube de données au lieu de les calculer
-// analytiquement — le reste du pipeline (synchrotron, transfert polarisé) ne
-// dépend que de cette structure, jamais de la source des données.
+// All quantities use geometrized units (G=c=1), consistent with the rest of
+// the renderer. A GRMHD backend will populate the same fields by interpolating
+// snapshot data; downstream synchrotron and polarized-transfer code depends
+// only on this structure, not on the data source.
 // -----------------------------------------------------------------------------
 struct PlasmaState {
-    double rho     = 0.0;   // densité (ici : facteur d'opacité relatif, sans dimension)
-    double Theta_e = 0.0;   // température électronique adimensionnée kT_e/(m_e c²)
-                             // — non peuplée avant l'étape 2 (prescription R-high/R-low)
+    double rho     = 0.0;   // density; currently used as a relative opacity factor
+    double Theta_e = 0.0;   // dimensionless electron temperature kT_e/(m_e c^2)
+                             // populated once an electron-temperature model is enabled
 
-    // Quadrivitesse du fluide (contravariant, coordonnées de Boyer-Lindquist
-    // locales) : u^t, u^r, u^theta, u^phi.
+    // Contravariant fluid four-velocity in local Boyer-Lindquist coordinates:
+    // u^t, u^r, u^theta, u^phi.
     double u4[4] = {0.0, 0.0, 0.0, 0.0};
 
-    // Quadrivecteur champ magnétique (contravariant, même repère). Dans le
-    // backend procédural actuel, c'est un champ JOUET (toroïdal, aligné sur
-    // l'écoulement, magnitude arbitraire) — pas une vraie sortie GRMHD. Non
-    // utilisé avant les étapes 3-4 (coefficients synchrotron / polarisation).
+    // Contravariant magnetic four-vector in the same basis. In the current
+    // procedural backend this is a toy toroidal field, not a physical GRMHD
+    // solution. It becomes physically meaningful with snapshot-driven plasma.
     double B4[4] = {0.0, 0.0, 0.0, 0.0};
 
-    bool valid = false;   // hors du tore de plasma / densité sous le plancher
+    bool valid = false;   // false outside the emitting plasma / below density threshold
 };
 
 }  // namespace bhsim

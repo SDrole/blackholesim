@@ -1,20 +1,4 @@
-// -----------------------------------------------------------------------------
-// S2 — Validation de la conversion primitives <-> conservées (hydro pur).
 //
-// Leçon de S1 appliquée : un round-trip P->U->P est NÉCESSAIRE mais PAS
-// SUFFISANT — il peut s'auto-confirmer si les deux fonctions partagent une
-// erreur commune. La suite est donc structurée en trois blocs :
-//
-//   A. Round-trip massif (déterministe + aléatoire), avec analyse de l'erreur
-//      EN FONCTION du régime (W, thermodynamique) plutôt qu'un seuil aveugle.
-//   B. Tests INDÉPENDANTS : identités analytiques vérifiées directement sur
-//      l'état conservé, formes closes inversibles à la main, et référence
-//      `long double` qui ne partage pas l'arithmétique du code testé.
-//   C. Limites physiques connues, retrouvées quantitativement.
-//
-// Aucun plancher correctif : les domaines mal conditionnés sont MESURÉS et
-// DOCUMENTÉS, pas masqués.
-// -----------------------------------------------------------------------------
 #include "Fluid.hpp"
 #include "EOS.hpp"
 
@@ -42,8 +26,6 @@ void reportBool(const char* name, bool ok, const char* detail = nullptr) {
     if (!ok) ++g_failures;
 }
 
-// Générateur déterministe (xorshift) : reproductible d'une exécution à l'autre,
-// indispensable pour qu'un échec soit rejouable.
 struct Rng {
     uint64_t s;
     explicit Rng(uint64_t seed) : s(seed ? seed : 0x9E3779B97F4A7C15ull) {}
@@ -61,9 +43,7 @@ double relErr(double a, double b) {
     return std::fabs(a - b) / d;
 }
 
-// =============================================================================
-//  BLOC A — round-trip massif, avec analyse par régime
-// =============================================================================
+//
 
 struct RegimeStats {
     const char* label;
@@ -71,9 +51,6 @@ struct RegimeStats {
     double worstResidual = 0.0;
     int    worstIters = 0;
     long long n = 0, bisections = 0;
-    // Distinction ESSENTIELLE : un échec algorithmique (bracket, convergence)
-    // est inacceptable ; une limite de conditionnement (u<0 par annulation)
-    // est une propriété de la formulation conservative, à documenter.
     long long algoFailures = 0;
     long long conditioningLimited = 0;
     long long byReason[8] = {0,0,0,0,0,0,0,0};   // ventilation par RecoveryFailure
@@ -88,7 +65,6 @@ void runRoundTrip(RegimeStats& st, const IdealGasEOS& eos,
         P0.rho = rng.logUniform(rhoLo, rhoHi);
         P0.u   = rng.logUniform(uLo, uHi);
 
-        // Direction de vitesse arbitraire, uniforme sur la sphère.
         const double W = rng.logUniform(WLo, WHi);
         const double utot = std::sqrt(std::max(W * W - 1.0, 0.0));
         const double cth = 2.0 * rng.uniform() - 1.0;
@@ -108,9 +84,8 @@ void runRoundTrip(RegimeStats& st, const IdealGasEOS& eos,
             const int ri = static_cast<int>(stt.failure);
             if (ri >= 0 && ri < 8) ++st.byReason[ri];
             if (st.algoFailures == 0 && st.conditioningLimited == 0) {
-                // Capture du PREMIER cas en echec : diagnostic, pas devinette.
                 const double W0 = lorentzFactor(P0);
-                std::printf("         [1er echec de ce regime] rho=%.6e u=%.6e u/rho=%.2e W=%.6e\n"
+                std::printf("         [first failure in this regime] rho=%.6e u=%.6e u/rho=%.2e W=%.6e\n"
                             "            D=%.10e tau=%.10e |S|=%.10e  E-|S|=%.3e  raison=%s\n",
                             P0.rho, P0.u, P0.u / P0.rho, W0, U.D, U.tau,
                             std::sqrt(U.S[0]*U.S[0]+U.S[1]*U.S[1]+U.S[2]*U.S[2]),
@@ -124,8 +99,6 @@ void runRoundTrip(RegimeStats& st, const IdealGasEOS& eos,
             continue;
         }
         if (stt.usedBisection) ++st.bisections;
-        // Succès signalé « froid à la précision machine » : ce n'est PAS un
-        // échec, mais S3 doit pouvoir les compter — on les recense ici aussi.
         if (stt.coldAtMachinePrecision) ++st.conditioningLimited;
 
         st.worstRho = std::max(st.worstRho, relErr(P1.rho, P0.rho));
@@ -137,7 +110,6 @@ void runRoundTrip(RegimeStats& st, const IdealGasEOS& eos,
         st.worstResidual = std::max(st.worstResidual, stt.residual);
         st.worstIters = std::max(st.worstIters, stt.iterations);
 
-        // CONTRAINTE DURE : aucun état retourné ne doit violer la physique.
         if (!(P1.rho > 0.0) || !(P1.u >= 0.0) || !std::isfinite(stt.lorentzFactor)
             || stt.lorentzFactor < 1.0) {
             ++st.algoFailures;
@@ -155,8 +127,8 @@ void testRoundTripByRegime() {
         {"moderement rel(W 1.01..2)       ", 1e-6, 1e6, 1e-8, 1e6, 1.01, 2.0},
         {"relativiste   (W 2..20)         ", 1e-6, 1e6, 1e-8, 1e6, 2.0, 20.0},
         {"ultrarel.     (W 20..1000)      ", 1e-6, 1e6, 1e-8, 1e6, 20.0, 1000.0},
-        {"froid         (u/rho ~ 1e-10)   ", 1e-3, 1e3, 1e-13, 1e-7, 1.0 + 1e-6, 50.0},
-        {"chaud         (u/rho >> 1)      ", 1e-3, 1e3, 1e3, 1e9, 1.0 + 1e-6, 50.0},
+        {"cold          (u/rho ~ 1e-10)   ", 1e-3, 1e3, 1e-13, 1e-7, 1.0 + 1e-6, 50.0},
+        {"hot           (u/rho >> 1)      ", 1e-3, 1e3, 1e3, 1e9, 1.0 + 1e-6, 50.0},
     };
     for (const Cfg& c : cfgs) {
         RegimeStats st; st.label = c.label;
@@ -164,9 +136,9 @@ void testRoundTripByRegime() {
         regimes.push_back(st);
     }
 
-    std::printf("       round-trip P->U->P par regime (20000 cas chacun) :\n");
+    std::printf("       P->U->P round trip by regime (20000 cases each) :\n");
     std::printf("         %-34s %-10s %-10s %-10s %-6s %-7s %s\n",
-                "regime", "err rho", "err u", "err v", "iters", "ech.algo", "cond.");
+                "regime", "err rho", "err u", "err v", "iters", "alg.fail", "cond.");
     double worstAll = 0.0;
     long long totalAlgo = 0, totalCond = 0;
     for (const RegimeStats& s : regimes) {
@@ -177,10 +149,6 @@ void testRoundTripByRegime() {
         totalAlgo += s.algoFailures;
         totalCond += s.conditioningLimited;
     }
-    // L'erreur sur `u` est traitée séparément : c'est la quantité intrinsèquement
-    // la plus mal conditionnée (voir bloc dédié plus bas).
-    // Ventilation des échecs par raison : ne pas se contenter d'un compteur
-    // global, il faut savoir SI c'est algorithmique ou du conditionnement.
     long long agg[8] = {0,0,0,0,0,0,0,0};
     for (const RegimeStats& s : regimes)
         for (int i = 0; i < 8; ++i) agg[i] += s.byReason[i];
@@ -194,22 +162,16 @@ void testRoundTripByRegime() {
                             toString(static_cast<RecoveryFailure>(i)), agg[i]);
     }
 
-    report("A1 round-trip : rho et vitesse sur tous les regimes", worstAll, 1e-9);
-    reportBool("A2a AUCUN echec algorithmique (bracket/convergence)",
+    report("A1 round trip: rho and velocity across all regimes", worstAll, 1e-9);
+    reportBool("A2a NO algorithmic failures (bracketing/convergence)",
                totalAlgo == 0,
-               totalAlgo == 0 ? "0 echec algorithmique" : "echecs algorithmiques presents");
+               totalAlgo == 0 ? "0 algorithmic failures" : "algorithmic failures present");
     std::printf("       -> %lld cas signales 'coldAtMachinePrecision' : succes NON FATAL\n"
-                "          (converged=true, failure=None, u=0 = meilleur etat\n"
+                "          (converged=true, failure=None, u=0 = best representable state\n"
                 "          representable). Comptabilises pour que S3 decide de sa\n"
                 "          politique de planchers en connaissance de cause.\n", totalCond);
 }
 
-// A3 — conditionnement de `u` : mise en évidence quantitative.
-// Physique du problème : u est reconstruit comme une DIFFÉRENCE entre l'énergie
-// totale et (masse au repos + énergie cinétique). Quand u/ρ << W², cette
-// différence est petite devant ses termes -> annulation catastrophique
-// INHÉRENTE à la formulation, pas un défaut de l'algorithme. On la mesure au
-// lieu de la masquer.
 void testInternalEnergyConditioning() {
     const IdealGasEOS eos(4.0 / 3.0);
     std::printf("       conditionnement de u : err(u) selon W et u/rho :\n");
@@ -231,24 +193,18 @@ void testInternalEnergyConditioning() {
             const double digits = (e > 0.0) ? -std::log10(std::max(e, 1e-300)) : 16.0;
             std::printf("         %-12.4g %-14.0e %-12.2e ~%.1f chiffres restants\n",
                         W, ratio, e, digits);
-            // Régime bien conditionné : gaz tiède/chaud à W modéré.
             if (ratio >= 1e-4 && W <= 10.0) worstWellConditioned = std::max(worstWellConditioned, e);
         }
     }
-    report("A3 err(u) dans le regime bien conditionne (u/rho>=1e-4, W<=10)",
+    report("A3 err(u) in well-conditioned regime (u/rho>=1e-4, W<=10)",
            worstWellConditioned, 1e-10);
-    std::printf("       -> DOMAINE MAL CONDITIONNE DOCUMENTE (non masque) : fluide tres\n"
-                "          froid (u/rho <~ 1e-8) a W eleve. Inherent a la formulation\n"
-                "          conservative (u = difference de grands termes), pas un bug.\n");
+    std::printf("       -> DOCUMENTED ILL-CONDITIONED DOMAIN (not hidden): very\n"
+                "          cold fluid (u/rho <~ 1e-8) at high W. Inherent to the\n"
+                "          conservative representation (u = difference of large terms), not an algorithmic bug.\n");
 }
 
-// =============================================================================
-//  BLOC B — tests INDÉPENDANTS (ne réutilisent pas primitiveToConserved)
-// =============================================================================
+//
 
-// B1 — identités analytiques vérifiées DIRECTEMENT sur l'état conservé.
-// On ne compare pas P1 à P0 : on vérifie que les relations structurelles
-// reliant D, S, τ, h, W sont satisfaites par le résultat de l'inversion.
 void testAnalyticIdentities() {
     const IdealGasEOS eos(5.0 / 3.0);
     Rng rng(0xA11CEull);
@@ -272,13 +228,11 @@ void testAnalyticIdentities() {
         if (!conservedToPrimitive(U, eos, P, st)) continue;
         ++g_casesRun;
 
-        // Reconstruction des identités À PARTIR DES PRIMITIVES RETOURNÉES,
-        // sans passer par primitiveToConserved.
         const double Wr = std::sqrt(1.0 + P.utilde[0]*P.utilde[0]
                                         + P.utilde[1]*P.utilde[1]
                                         + P.utilde[2]*P.utilde[2]);
         const double p  = (eos.gamma() - 1.0) * P.u;
-        const double h  = 1.0 + (P.u + p) / P.rho;      // définition, pas l'EOS helper
+        const double h  = 1.0 + (P.u + p) / P.rho;
 
         // (i)   D   = ρW
         worstD = std::max(worstD, relErr(P.rho * Wr, U.D));
@@ -287,7 +241,6 @@ void testAnalyticIdentities() {
             worstS = std::max(worstS, relErr(P.rho * h * Wr * P.utilde[i], U.S[i]));
         // (iii) τ   = ρhW² - p - D
         worstTau = std::max(worstTau, relErr(P.rho * h * Wr * Wr - p - U.D, U.tau));
-        // (iv)  W   = √(1+ũ²)  et cohérence avec le W rapporté par le statut
         worstW = std::max(worstW, relErr(st.lorentzFactor, Wr));
     }
     report("B1a identite  D = rho W", worstD, 1e-12);
@@ -296,12 +249,9 @@ void testAnalyticIdentities() {
     report("B1d coherence du facteur de Lorentz rapporte", worstW, 1e-14);
 }
 
-// B2 — formes CLOSES inversibles à la main : oracle totalement indépendant.
 void testClosedFormCases() {
     const IdealGasEOS eos(4.0 / 3.0);
 
-    // (a) Fluide au repos : W=1 => D=ρ et τ=u EXACTEMENT (résultat analytique).
-    //     On construit U à la main, sans primitiveToConserved.
     double worstRest = 0.0;
     for (double rho : {1e-6, 1e-2, 1.0, 1e3, 1e6}) {
         for (double u : {1e-8, 1e-2, 1.0, 1e4}) {
@@ -315,12 +265,8 @@ void testClosedFormCases() {
             worstRest = std::max(worstRest, std::fabs(P.utilde[0]) + std::fabs(P.utilde[1]) + std::fabs(P.utilde[2]));
         }
     }
-    report("B2a fluide au repos : D=rho, tau=u (forme close)", worstRest, 1e-12);
+    report("B2a fluid at rest: D=rho, tau=u (closed form)", worstRest, 1e-12);
 
-    // (b) Fluide FROID (u=0, p=0) : h=1, donc
-    //        D = ρW ,  S = ρW ũ ,  τ = ρW(W-1) = D(W-1)
-    //     => ũ = |S|/D et W = √(1+ũ²) s'inversent EXPLICITEMENT.
-    //     Oracle purement algébrique, aucune itération.
     double worstCold = 0.0;
     for (double rho : {1e-3, 1.0, 1e3}) {
         for (double Wt : {1.0 + 1e-9, 1.5, 10.0, 200.0}) {
@@ -333,18 +279,12 @@ void testClosedFormCases() {
             if (!conservedToPrimitive(U, eos, P, st)) { worstCold = 1.0; continue; }
             worstCold = std::max(worstCold, relErr(P.rho, rho));
             worstCold = std::max(worstCold, relErr(st.lorentzFactor, Wt));
-            // u doit être nul (ou négligeable devant ρ).
             worstCold = std::max(worstCold, P.u / rho);
         }
     }
-    report("B2b fluide froid : inversion algebrique explicite", worstCold, 1e-9);
+    report("B2b cold fluid: explicit algebraic inversion", worstCold, 1e-9);
 }
 
-// B3 — référence LONG DOUBLE : l'oracle ne partage pas l'arithmétique du code.
-// On réimplémente l'inversion en `long double` avec une bisection pure (donc
-// un algorithme DIFFÉRENT : pas de Newton, pas de dérivée numérique) et on
-// compare. Un bug algébrique commun serait révélé ; une simple différence
-// d'arrondi ne l'est pas.
 bool invertLongDouble(const ConservedState& U, long double gamma,
                       long double& rho, long double& u, long double& W) {
     const long double D = U.D;
@@ -374,7 +314,6 @@ bool invertLongDouble(const ConservedState& U, long double gamma,
     while (f(hi, rr, uu, WW) > 0.0L && guard++ < 300) hi *= 2.0L;
     if (f(lo, rr, uu, WW) < 0.0L) return false;
 
-    // Bisection pure : 200 itérations => bien au-delà de la précision du type.
     for (int i = 0; i < 200; ++i) {
         const long double mid = 0.5L * (lo + hi);
         if (f(mid, rr, uu, WW) > 0.0L) lo = mid; else hi = mid;
@@ -415,25 +354,6 @@ void testLongDoubleReference() {
         worstRho = std::max(worstRho, relErr(P.rho, (double)lrho));
         worstW   = std::max(worstW,   relErr(st.lorentzFactor, (double)lW));
 
-        // Au lieu de découper arbitrairement en « bon » et « mauvais » régime,
-        // on teste que l'erreur RESPECTE LA BORNE DE CONDITIONNEMENT PRÉDITE
-        // — test bien plus fort, valable sur TOUS les régimes.
-        //
-        // Analyse de propagation. u est reconstruit par
-        //     u = [τ - D(W-1)]/W² - p(1 - 1/W²)
-        // L'erreur dominante vient de W : comme 1-v² ~ 1/W², l'arrondi ABSOLU
-        // de v² (~eps) y devient une erreur relative ~eps·W², d'où
-        //     δW ~ ½·eps·W³.
-        // En dérivant,  ∂u/∂W ≈ -D/W² - 2u/W , donc
-        //     δu ≈ (D/W² + 2u/W)·δW = ½·eps·(D·W + 2u·W²)
-        // soit, en relatif (avec D·W/u = ρW²/u ≡ κ) :
-        //     δu/u ≈ ½·eps·(κ + 2W²)
-        //
-        // ⚠️ Le terme 2W² est ESSENTIEL et manquait dans une première version
-        // du modèle : il subsiste même pour κ → 0 (fluide très chaud), où la
-        // borne ½·eps·κ seule descendait SOUS l'epsilon machine — une borne
-        // qu'aucun calcul ne peut respecter. Symptôme : des rapports
-        // observé/prédit de 3,6e6 sur des cas pourtant parfaitement sains.
         const double eU = relErr(P.u, (double)lu);
         const double W0 = std::sqrt(1.0 + P0.utilde[0]*P0.utilde[0]
                                         + P0.utilde[1]*P0.utilde[1]
@@ -446,16 +366,12 @@ void testLongDoubleReference() {
         if (kappa > 1e10) { worstUillCond = std::max(worstUillCond, eU); ++illConditioned; }
     }
     std::printf("       %d cas compares a la reference long double (bisection pure,\n"
-                "       algebre naive conservee pour l'independance)\n", compared);
+                "       naive algebra retained for independence)\n", compared);
     report("B3a rho vs reference long double", worstRho, 1e-11);
     report("B3c W   vs reference long double", worstW,   1e-11);
-    // Le critere porte sur le RAPPORT observe/predit : l'erreur doit rester
-    // dans un petit multiple de la borne de conditionnement, sur TOUS les cas.
-    // Le facteur 50 couvre la tolérance de convergence du solveur (1e-14 ~ 45 eps)
-    // et l'accumulation sur les quelques opérations de la chaîne.
     report("B3b u : ecart / borne de conditionnement predite", worstU, 50.0);
     std::printf("       -> rapport max observe/predit = %.2f  (borne 1/2*eps*(kappa+2W^2))\n"
-                "          %d cas a kappa > 1e10 (u sous le plancher numerique de la\n"
+                "          %d cases at kappa > 1e10 (u below the numerical floor of the\n"
                 "          representation conservative), ecart max sur u = %.2e\n",
                 worstU, illConditioned, worstUillCond);
 }
@@ -464,9 +380,6 @@ void testLongDoubleReference() {
 //  BLOC C — limites physiques connues
 // =============================================================================
 
-// C1 — limite newtonienne : pour v << 1 et u << ρ,
-//        τ -> u + ½ ρ v²   (énergie interne + cinétique)
-// On vérifie que la relation est retrouvée QUANTITATIVEMENT, à l'ordre attendu.
 void testNewtonianLimit() {
     const IdealGasEOS eos(5.0 / 3.0);
     std::printf("       limite newtonienne : tau vs (u + 1/2 rho v^2) :\n");
@@ -479,19 +392,14 @@ void testNewtonianLimit() {
         const ConservedState U = primitiveToConserved(P, eos);
         const double newtonian = P.u + 0.5 * P.rho * v * v;
         const double rel = std::fabs(U.tau - newtonian) / newtonian;
-        // L'écart doit être O(v²) relatif : on normalise pour vérifier l'ORDRE.
         const double scaled = rel / (v * v);
         std::printf("         v = %-8.0e  tau = %-12.6e  newtonien = %-12.6e  ecart/v^2 = %.3f\n",
                     v, U.tau, newtonian, scaled);
         worstScaled = std::max(worstScaled, scaled);
     }
-    // Le rapport doit rester BORNÉ (O(1)) quand v -> 0 : preuve que l'écart
-    // est bien d'ordre v² et non d'ordre inférieur.
     report("C1 limite newtonienne : ecart d'ordre v^2 (rapport borne)", worstScaled, 5.0);
 }
 
-// C2 — états inadmissibles : doivent être REJETÉS avec un diagnostic, jamais
-// « réparés » silencieusement.
 void testRejectionOfInvalidStates() {
     const IdealGasEOS eos(4.0 / 3.0);
     PrimitiveState P; RecoveryStatus st;
@@ -504,9 +412,9 @@ void testRejectionOfInvalidStates() {
     ConservedState u4; u4.D = 1.0; u4.tau = -0.9999;                  // E < D, pas d'energie
 
     const Case cases[] = {
-        {"densite negative D<0",            u1, RecoveryFailure::NonPositiveDensity},
+        {"negative density D<0",            u1, RecoveryFailure::NonPositiveDensity},
         {"moment > energie (|S|>E)",        u2, RecoveryFailure::EnergyBelowMomentum},
-        {"entree NaN",                      u3, RecoveryFailure::NonFiniteInput},
+        {"NaN input",                      u3, RecoveryFailure::NonFiniteInput},
         {"energie insuffisante",            u4, RecoveryFailure::UnphysicalResult},
     };
     std::printf("       rejet des etats conserves inadmissibles :\n");
@@ -514,14 +422,12 @@ void testRejectionOfInvalidStates() {
         const bool ok = conservedToPrimitive(c.U, eos, P, st);
         const bool rejected = !ok;
         std::printf("         %-32s -> %s (%s)\n", c.label,
-                    rejected ? "REJETE" : "ACCEPTE (!!)", toString(st.failure));
+                    rejected ? "REJECTED" : "ACCEPTED (!!)", toString(st.failure));
         if (!rejected) allRejected = false;
     }
     reportBool("C2 tous les etats inadmissibles sont rejetes, non repares", allRejected);
 }
 
-// C3 — stress massif à la frontière d'admissibilité (E légèrement > |S|),
-// là où v -> 1 et où l'inversion est la plus sollicitée.
 void testNearAdmissibilityBoundary() {
     const IdealGasEOS eos(4.0 / 3.0);
     long long n = 0, ok = 0, unphysical = 0;
@@ -531,7 +437,6 @@ void testNearAdmissibilityBoundary() {
     for (double eps : {1e-3, 1e-6, 1e-9, 1e-12}) {
         for (double rho : {1e-3, 1.0, 1e3}) {
             for (double Wt : {10.0, 100.0, 1000.0}) {
-                // Fluide quasi froid à W élevé : E n'excède |S| que de peu.
                 const double ut = std::sqrt(Wt * Wt - 1.0);
                 PrimitiveState P0;
                 P0.rho = rho; P0.u = eps * rho;
@@ -550,26 +455,15 @@ void testNearAdmissibilityBoundary() {
             }
         }
     }
-    std::printf("       frontiere d'admissibilite : %lld cas, %lld converges, "
+    std::printf("       admissibility boundary: %lld cases, %lld converged, "
                 "%d iterations max, residu max %.2e\n", n, ok, maxIters, worstResidual);
-    reportBool("C3a aucun etat non physique retourne pres de la frontiere",
+    reportBool("C3a no unphysical state returned near the boundary",
                unphysical == 0);
-    reportBool("C3b convergence sur toute la frontiere testee", ok == n);
+    reportBool("C3b convergence across the entire tested boundary", ok == n);
 }
 
-// =============================================================================
-//  BLOC D — le diagnostic de conditionnement « froid à la précision machine »
-// =============================================================================
-
-// D1 — INDISTINGUABILITÉ : un vrai u=0 et un u>0 sous le seuil produisent-ils
-// le même état conservé ?
 //
-// Question posée par la peer review : plutôt que de PRÉTENDRE identifier
-// lequel des deux était l'état d'origine, on mesure si l'information subsiste
-// dans U. Méthode : construire les deux états, convertir en double, et
-// comparer les U bit à bit. Si les représentations sont identiques, AUCUN
-// algorithme ne peut les distinguer — c'est une limite d'information, pas
-// d'algorithme.
+
 void testColdIndistinguishability() {
     const IdealGasEOS eos(4.0 / 3.0);
     std::printf("       U(u=0) vs U(u=delta) : a partir de quel delta les etats\n"
@@ -592,8 +486,6 @@ void testColdIndistinguishability() {
             warm.u = d * cold.rho;
             const ConservedState Uwarm = primitiveToConserved(warm, eos);
 
-            // Écarts exprimés en ULP (unités du dernier bit) : la bonne
-            // mesure pour « ces deux doubles sont-ils le même nombre ? ».
             auto ulps = [](double a, double b) {
                 const double m = std::max(std::fabs(a), std::fabs(b));
                 if (m == 0.0) return 0.0;
@@ -616,22 +508,20 @@ void testColdIndistinguishability() {
     reportBool("D1 existence d'un domaine strictement indistinguable",
                foundIdentical,
                foundIdentical ? "des etats u>0 donnent un U bit-a-bit identique a u=0"
-                              : "aucun cas identique trouve dans la plage testee");
+                              : "no bit-identical case found in tested range");
     std::printf("       -> CONCLUSION : pour delta/rho <= %.0e (dans la plage testee),\n"
                 "          U(u=delta) est BIT A BIT identique a U(u=0). La distinction\n"
                 "          est donc MATHEMATIQUEMENT IMPOSSIBLE apres conversion en\n"
-                "          double : ce n'est pas une limite de notre inversion. Le\n"
-                "          recovery retourne u=0 (meilleur etat representable) et pose\n"
+                "          double : this is not a limitation of the inversion algorithm. The\n"
+                "          recovery retourne u=0 (best representable state representable) et pose\n"
                 "          coldAtMachinePrecision pour que S3 le sache.\n",
                 largestIndistinguishable);
 }
 
-// D2 — le drapeau est-il bien posé quand il faut, et SEULEMENT quand il faut ?
 void testColdFlagSemantics() {
     const IdealGasEOS eos(4.0 / 3.0);
     PrimitiveState P; RecoveryStatus st;
 
-    // (a) Fluide franchement chaud : le drapeau NE DOIT PAS etre pose.
     bool okWarm = true;
     for (double W : {1.0, 2.0, 20.0}) {
         PrimitiveState P0; P0.rho = 1.0; P0.u = 1.0;
@@ -641,11 +531,8 @@ void testColdFlagSemantics() {
         if (!conservedToPrimitive(U, eos, P, st)) { okWarm = false; continue; }
         if (st.coldAtMachinePrecision) okWarm = false;
     }
-    reportBool("D2a fluide chaud : drapeau NON pose", okWarm);
+    reportBool("D2a hot fluid: flag NOT set", okWarm);
 
-    // (b) Fluide exactement froid construit analytiquement : recovery reussit,
-    //     u = 0, et le drapeau EST pose (u=0 est ici indistinguable d'un
-    //     sous-seuil, on ne pretend pas trancher).
     bool okCold = true;
     for (double W : {1.5, 10.0, 100.0}) {
         const double ut = std::sqrt(W * W - 1.0);
@@ -654,18 +541,13 @@ void testColdFlagSemantics() {
         U.S[0] = 1.0 * W * ut; U.S[1] = 0.0; U.S[2] = 0.0;
         U.tau = U.D * (W - 1.0);
         if (!conservedToPrimitive(U, eos, P, st)) { okCold = false; continue; }
-        // u doit être nul ou sous le plancher de résolution — on n'exige PAS
-        // u == 0.0 exactement : selon l'arrondi, f(0) peut sortir légèrement
-        // positif et l'itération normale rendre u ~ 1e-17. Ce qui compte est
-        // que u soit négligeable ET que le drapeau soit posé.
         if (!(P.u / U.D < 1e-15)) okCold = false;
         if (!st.coldAtMachinePrecision) okCold = false;
         if (st.failure != RecoveryFailure::None) okCold = false;
         if (!st.converged) okCold = false;
     }
-    reportBool("D2b fluide froid : succes + u negligeable + drapeau + failure=None", okCold);
+    reportBool("D2b cold fluid: success + negligible u + flag + failure=None", okCold);
 
-    // (c) Fluide sous le seuil : meme traitement, drapeau pose, PAS d'echec.
     bool okSub = true; int flagged = 0;
     for (double W : {50.0, 200.0}) {
         PrimitiveState P0; P0.rho = 1.0; P0.u = 1e-18;
@@ -676,8 +558,8 @@ void testColdFlagSemantics() {
         if (st.failure != RecoveryFailure::None) okSub = false;
         if (st.coldAtMachinePrecision) ++flagged;
     }
-    reportBool("D2c etat sous le seuil : succes non fatal, signale", okSub && flagged > 0);
-    std::printf("       -> le drapeau est un DIAGNOSTIC, pas un echec : converged=true,\n"
+    reportBool("D2c sub-threshold state: non-fatal success, reported", okSub && flagged > 0);
+    std::printf("       -> the flag is a DIAGNOSTIC, not a failure: converged=true,\n"
                 "          failure=None. S3 pourra compter ces cellules et decider.\n");
 }
 
@@ -686,7 +568,7 @@ void testColdFlagSemantics() {
 int main() {
     std::printf("=====================================================================\n");
     std::printf("  S2 : primitives <-> conservees, HYDRODYNAMIQUE RELATIVISTE PURE\n");
-    std::printf("       (aucun champ magnetique a ce stade)\n");
+    std::printf("       (no magnetic field at this stage)\n");
     std::printf("=====================================================================\n");
 
     std::printf("\n  BLOC A -- round-trip massif et conditionnement\n");
@@ -703,16 +585,16 @@ int main() {
     testRejectionOfInvalidStates();
     testNearAdmissibilityBoundary();
 
-    std::printf("\n  BLOC D -- diagnostic de conditionnement (froid a la precision machine)\n");
+    std::printf("\n  BLOCK D -- conditioning diagnostics (cold at machine precision)\n");
     testColdIndistinguishability();
     testColdFlagSemantics();
 
     std::printf("---------------------------------------------------------------------\n");
     std::printf("  %lld cas testes au total.\n", g_casesRun);
     if (g_failures == 0)
-        std::printf("  S2 VALIDE -- inversion hydro robuste, S3 peut demarrer.\n");
+        std::printf("  S2 VALIDATED -- robust hydro inversion; S3 may start.\n");
     else
-        std::printf("  %d ECHEC(S) -- S2 NON valide, ne pas demarrer S3.\n", g_failures);
+        std::printf("  %d FAILURE(S) -- S2 is NOT validated; do not start S3.\n", g_failures);
     std::printf("=====================================================================\n");
     return g_failures == 0 ? 0 : 1;
 }

@@ -6,36 +6,34 @@
 namespace grmhd {
 
 // -----------------------------------------------------------------------------
-// S0 — Grille MKS pour le solveur GRMHD.
+// S0 — MKS grid for the GRMHD solver.
 //
-// Convention volumes finis : les variables vivent au CENTRE des cellules,
-// les flux sur les FACES. On stocke les deux jeux de coordonnées.
+// Finite-volume convention: state variables live at CELL CENTERS; fluxes live
+// on FACES. Both coordinate sets are represented explicitly.
 //
-// Choix délibéré (standard du domaine) : la frontière radiale interne est
-// placée À L'INTÉRIEUR de l'horizon. Comme aucune information ne peut en
-// sortir (causalité), la condition aux limites interne n'influence pas la
-// solution physique — c'est précisément ce que permet Kerr-Schild et
-// qu'interdit Boyer-Lindquist.
+// Deliberate standard choice: the inner radial boundary lies INSIDE the event
+// horizon. Causality prevents physical information from propagating back out,
+// so the inner boundary condition cannot contaminate the exterior solution.
+// Horizon-penetrating Kerr-Schild coordinates make this possible.
 //
-// Halo de cellules fantômes (ghost) pour la reconstruction : NG=3 couvre
-// PLM (besoin de 1-2) et laisse la place à PPM/WENO plus tard sans
-// retoucher la structure.
+// Ghost-cell halo: NG=3 covers PLM and leaves room for future PPM/WENO work
+// without changing the storage layout.
 // -----------------------------------------------------------------------------
 struct Grid {
-    // Nombre de cellules physiques (hors ghosts) par direction.
+    // Number of physical cells, excluding ghosts.
     int n1 = 0, n2 = 0, n3 = 0;
-    static constexpr int NG = 3;          // cellules fantômes de chaque côté
+    static constexpr int NG = 3;          // ghost cells on each side
 
-    // Bornes du domaine en coordonnées MKS.
+    // Domain bounds in MKS coordinates.
     double x1min = 0.0, x1max = 0.0;      // ln r
-    double x2min = 0.0, x2max = 1.0;      // θ paramétré
+    double x2min = 0.0, x2max = 1.0;      // parameterized theta
     double x3min = 0.0, x3max = 2.0 * kPi;
 
     double dx1 = 0.0, dx2 = 0.0, dx3 = 0.0;
 
     ModifiedKerrSchild coords{0.3};
 
-    // Tailles allouées (avec ghosts).
+    // Allocated dimensions, including ghost cells.
     int t1() const { return n1 + 2 * NG; }
     int t2() const { return n2 + 2 * NG; }
     int t3() const { return n3 + 2 * NG; }
@@ -43,28 +41,27 @@ struct Grid {
         return static_cast<std::size_t>(t1()) * t2() * t3();
     }
 
-    // Indexation linéaire (i,j,k en indices AVEC ghosts, 0-based).
+    // Linear index for i,j,k including ghost cells, 0-based.
     std::size_t idx(int i, int j, int k) const {
         return (static_cast<std::size_t>(i) * t2() + j) * t3() + k;
     }
 
-    // Coordonnées MKS du centre de la cellule (indices avec ghosts).
+    // MKS coordinates at cell centers.
     double x1c(int i) const { return x1min + (i - NG + 0.5) * dx1; }
     double x2c(int j) const { return x2min + (j - NG + 0.5) * dx2; }
     double x3c(int k) const { return x3min + (k - NG + 0.5) * dx3; }
 
-    // Coordonnées MKS de la face basse de la cellule.
+    // MKS coordinates of the lower face of a cell.
     double x1f(int i) const { return x1min + (i - NG) * dx1; }
     double x2f(int j) const { return x2min + (j - NG) * dx2; }
     double x3f(int k) const { return x3min + (k - NG) * dx3; }
 
-    // Coordonnées physiques Kerr-Schild correspondantes.
+    // Corresponding physical Kerr-Schild coordinates.
     double rOf(int i) const { return coords.rOf(x1c(i)); }
     double thetaOf(int j) const { return coords.thetaOf(x2c(j)); }
     double phiOf(int k) const { return x3c(k); }
 
-    // Construit une grille sphérique MKS. rIn doit être placé à l'intérieur
-    // de l'horizon (cf. commentaire d'en-tête).
+    // Construct a spherical MKS grid. rIn should lie inside the horizon.
     static Grid makeSpherical(int n1, int n2, int n3,
                               double rIn, double rOut, double hslope = 0.3) {
         Grid g;
