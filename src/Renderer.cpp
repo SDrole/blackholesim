@@ -233,7 +233,7 @@ Renderer::Renderer(const Config& cfg)
             }
         }
         if (!skyLoaded_)
-            std::fprintf(stderr, "  [ciel] texture '%s' illisible -> étoiles procédurales\n",
+            std::fprintf(stderr, "  [sky] could not read texture '%s' -> using procedural stars\n",
                          cfg_.starTexturePath.c_str());
     }
 }
