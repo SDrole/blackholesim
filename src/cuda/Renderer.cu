@@ -1,32 +1,3 @@
-// -----------------------------------------------------------------------------
-// Renderer.cu — portage CUDA du moteur de rendu Kerr.
-//
-// Réécriture de l'intégrateur géodésique RKF45 (hamiltonien canonique, métrique
-// de Kerr) et du disque relativiste de Novikov-Thorne (flux de Page-Thorne) sous
-// forme de kernel massivement parallèle : un thread CUDA trace tous les rayons
-// SSAA d'un pixel. Le résultat (image HDR linéaire + cartes scientifiques) est
-// strictement identique à celui du moteur CPU (mêmes formules, double précision)
-// afin de préserver la conservation de la constante de Carter (< 1e-6).
-//
-// La précision DOUBLE est conservée volontairement : le contrôleur de pas vise
-// atol = rtol = 1e-10 et la dérive de Carter est vérifiée à 1e-6 — hors de portée
-// du simple précision. Sur Ada (RTX 4090) le FP64 est bridé (1:64), mais le
-// parallélisme (≈132 M rayons/image traités de front) reste très supérieur au CPU.
-//
-// Trois raffinements de fidélité visuelle (au-delà du portage 1:1 du CPU) :
-//   1. Turbulence MHD anisotrope (dev_mhdDensityFactor, dev_shearAspect) : le
-//      bruit du plasma est étiré azimutalement par le cisaillement képlérien
-//      différentiel plutôt que simplement tourné en bloc — cf. commentaire
-//      détaillé au-dessus de dev_mhdDensityFactor.
-//   2. Transfert radiatif multi-bande (dev_opacitySpectrum, dev_traceRay) :
-//      transmittance RGB vectorielle (opacité chromatique par canal), au lieu
-//      d'un scalaire gris appliqué identiquement aux 3 canaux.
-//   3. Anneaux de photons d'ordre élevé n≥2,3 (photonRingRadius/Step,
-//      ringSupersample dans renderKernel) : pas raffiné dans tout le corridor
-//      de la sphère de photons + budget de pas dédié (gpuMaxSteps) pour éviter
-//      la terminaison prématurée des rayons quasi critiques, et
-//      sur-échantillonnage adaptatif ciblé sur les pixels de bord.
-// -----------------------------------------------------------------------------
 #include <cuda_runtime.h>
 
 #include <cmath>
@@ -52,52 +23,41 @@ namespace cuda_detail {
         }                                                                       \
     } while (0)
 
-// Table de permutation de Perlin (identique à la version CPU), en mémoire
-// constante : accès rapide et diffusé pour le bruit de plasma du disque.
 __constant__ int c_perm[512];
 
-// --- Paramètres de la scène transmis au kernel (POD, passé par valeur) --------
 struct GpuParams {
     double M, a;                       // masse, spin (longueur)
-    int    W, H, S;                    // largeur, hauteur, SSAA (S×S échantillons)
+    int    W, H, S;
     double exposure;
 
-    // Caméra (observateur ZAMO à distance finie) — tétrade constante par image.
     double rObs, thetaObs, halfWidth, halfHeight;
     double obsLapse, obsOmega, obsSigma, obsDelta, obsGphiphi, obsSin, obsCos;
 
-    // Disque de Novikov-Thorne.
     int    diskEnabled;
     double isco, diskOuter, diskShapeMax, diskTempScaleK, diskPeakR, diskGain;
-    double diskExposure, diskOpacity;   // contraste volumétrique (exposition + opacité χ)
+    double diskExposure, diskOpacity;
     double opacitySpectralIndex;        // χ_λ ∝ (λref/λ)^indice : auto-absorption chromatique
     double planckNorm;                  // calibration luminance de dev_planckB (cf. commentaire)
 
-    // Texture de plasma (fBm + bras spiraux) + anisotropie MHD (cisaillement képlérien).
     double noiseStrength, noiseFreq, noiseLacunarity, noiseGain;
     int    noiseOctaves, spiralArms;
     double spiralPitch, spiralStrength, noiseEvolution;
     double shearWindup, shearGain, fluxPower;
 
-    // Intégrateur RKF45 adaptatif.
     double tolerance, stepInitial, stepMax, stepMin, horizonMargin, rPlus, safety;
     int    maxSteps;
 
-    // Corridor de raffinement pour les anneaux de photons d'ordre élevé + AA adaptative.
     double photonRingRadius, photonRingStep;
     int    ringSupersample;
 
-    // LUT couleur (Planck ⊗ CIE) et ciel.
     double lutTmin, lutTmax, lutInvStep;
     int    lutSize;                    // dernier index valide (= taille - 1)
     int    skyW, skyH, skyLoaded;
     double starDensity, starBrightness;
 
-    // État d'animation courant.
     double animTime, animAzimuth;
 };
 
-// --- État géodésique vu comme vecteur à 5 composantes -------------------------
 struct GState { double r, theta, phi, pr, pth; };
 
 __device__ __forceinline__ GState operator+(const GState& a, const GState& b) {
@@ -111,15 +71,12 @@ __device__ __forceinline__ GState operator*(double s, const GState& a) {
 }
 
 struct GPhoton { GState s; double E, Lz, Q, K; };
-struct GSample { double3 color; double g; double drift; int hit; };  // hit : 0 fond,1 disque,2 horizon
+struct GSample { double3 color; double g; double drift; int hit; };
 
 __device__ __forceinline__ double clampd(double x, double lo, double hi) {
     return x < lo ? lo : (x > hi ? hi : x);
 }
 
-// =============================================================================
-//  Géométrie de Kerr / disque (équivalents device de Metric.cpp)
-// =============================================================================
 __device__ __forceinline__ double dev_orbitalOmega(double r, double M, double a) {
     return sqrt(M) / (pow(r, 1.5) + a * sqrt(M));
 }
@@ -170,9 +127,6 @@ __device__ double dev_pageThorne(double r, const GpuParams& p) {
     return f > 0.0 ? f : 0.0;
 }
 
-// =============================================================================
-//  Géodésique (équivalent device de Geodesic.cpp)
-// =============================================================================
 __device__ GState dev_rhs(const GState& s, double M, double a, double E, double Lz) {
     const double r = s.r;
     const double sinT = fmax(sin(s.theta), 1e-6);
@@ -216,7 +170,6 @@ __device__ __forceinline__ double dev_carterK(const GState& s, double a, double 
     return Q + LmaE * LmaE;
 }
 
-// --- Runge-Kutta-Fehlberg 4(5) : un pas, renvoie y5 et l'erreur (y5 - y4) -----
 __device__ void dev_rkf45(const GState& y, double h, double M, double a, double E, double Lz,
                           GState& y5, GState& err) {
     const GState k1 = dev_rhs(y, M, a, E, Lz);
@@ -256,9 +209,6 @@ __device__ __forceinline__ double dev_proposeStepFactor(double errorNorm, bool& 
     return clampd(factor, 0.2, 5.0);
 }
 
-// =============================================================================
-//  Caméra (équivalent device de Camera.cpp) — tétrade ZAMO précalculée
-// =============================================================================
 __device__ GPhoton dev_generateRay(int i, int j, double offX, double offY, const GpuParams& p) {
     const double a = p.a;
     const double alpha = (2.0 * (i + offX) / p.W - 1.0) * p.halfWidth;
@@ -288,9 +238,6 @@ __device__ GPhoton dev_generateRay(int i, int j, double offX, double offY, const
     return ph;
 }
 
-// =============================================================================
-//  Bruit de Perlin / texture de plasma (équivalent device de Renderer.cpp)
-// =============================================================================
 __device__ __forceinline__ double dev_fade(double t) { return t * t * t * (t * (t * 6.0 - 15.0) + 10.0); }
 __device__ __forceinline__ double dev_grad(int h, double x, double y, double z) {
     const int hh = h & 15;
@@ -324,18 +271,10 @@ __device__ double dev_fbm(double x, double y, double z, int octaves, double lacu
     }
     return norm > 0.0 ? sum / norm : 0.0;
 }
-// =============================================================================
-//  Pipeline VOLUMÉTRIQUE (FP32, intrinsèques CUDA) — remplace l'ancien disque
-//  plan. Géométrie épaisse H(r)=0.05 r, turbulence MHD (fBm), thermodynamique
-//  de Novikov-Thorne et corps noir de Planck échantillonné en RVB. La précision
-//  simple est volontaire ici : ce bloc est le coût dominant et n'intervient pas
-//  dans la conservation de Carter (assurée par la géodésique restée en double).
-// =============================================================================
 __device__ __forceinline__ float dev_clampf(float x, float lo, float hi) {
     return x < lo ? lo : (x > hi ? hi : x);
 }
 
-// --- Bruit de Perlin simple précision (intrinsèques) : turbulence de plasma ---
 __device__ __forceinline__ float dev_fadef(float t) {
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
@@ -372,9 +311,6 @@ __device__ float dev_fbmf(float x, float y, float z, int octaves, float lacunari
     return norm > 0.0f ? sum / norm : 0.0f;
 }
 
-// --- Température locale de Novikov-Thorne : T(r) ∝ r^{-3/4} (1-√(r_in/r))^{1/4} -
-// La correction de bord intérieur encode le spin via r_isco(a). Normalisée pour
-// que diskTempScaleK soit atteinte au pic (r ≈ 1.361 r_isco ; h_max ≈ 0.4878).
 __device__ __forceinline__ float dev_ntTemperature(float r, const GpuParams& p) {
     const float ri = (float)p.isco;
     if (r <= ri) return 0.0f;
@@ -384,15 +320,6 @@ __device__ __forceinline__ float dev_ntTemperature(float r, const GpuParams& p) 
     return (float)p.diskTempScaleK * peakNorm * base * corr;
 }
 
-// --- Corps noir de Planck échantillonné en RVB (700 / 546 / 435 nm) -----------
-// B(λ,T) ∝ λ^{-5} / (exp(c2/(λT)) - 1), c2 = hc/k_B = 1.43877688e7 nm·K.
-// La référence verte (546 nm) ne donne PAS des valeurs O(1) en général — au pic
-// du disque (T ~ 7000 K), B(546,T) ~ 0.024, sous-exposant tout le rendu d'un
-// facteur ~40 par rapport à la LUT CPU (Planck ⊗ CIE 1931, normalisée à Y=1 au
-// pic). Fix : p.planckNorm = exp(c2/(546·diskTempScaleK)) - 1, précalculé côté
-// hôte, ramène B(546, diskTempScaleK) à exactement 1 — même convention que le
-// CPU (planckColor(diskTempScaleK) ≈ Y=1), pour un kDiskGain/diskExposure
-// cohérent entre les deux moteurs.
 __device__ __forceinline__ float dev_planckB(float lambda_nm, float T) {
     const float c2 = 1.43877688e7f;
     const float x  = c2 / (lambda_nm * fmaxf(T, 1.0f));
@@ -407,43 +334,14 @@ __device__ __forceinline__ float3 dev_planckRGB(float T, const GpuParams& p) {
                         dev_planckB(435.0f, T) * norm);
 }
 
-// --- Opacité chromatique (auto-absorption synchrotron, approximation) ---------
-// Un plasma synchrotron thermique n'absorbe pas la lumière de façon grise :
-// l'auto-absorption dépend de la fréquence (plus forte vers le bleu en régime
-// optiquement épais). Approximation à un seul indice spectral autour de la
-// référence verte (546 nm) : χ_λ/χ0 = (λref/λ)^s. s=0 restitue l'opacité grise
-// (comportement précédent, un seul χ pour les 3 canaux) ; s>0 rend le rouge
-// relativement plus transparent que le bleu, par analogie avec le
-// durcissement spectral de l'auto-absorption synchrotron.
 __device__ __forceinline__ float3 dev_opacitySpectrum(const GpuParams& p) {
     const float s = (float)p.opacitySpectralIndex;
     return make_float3(__powf(546.0f / 700.0f, s), 1.0f, __powf(546.0f / 435.0f, s));
 }
 
-// =============================================================================
-//  Turbulence MHD anisotrope : approximation de tube de flux magnétique
-//  cisaillé par la rotation différentielle képlérienne.
-//
-//  Un filament de plasma gelé dans le champ magnétique (théorème d'Alfvén,
-//  advection idéale MHD) est étiré par le cisaillement képlérien
-//  S(r) = -r dΩ/dr = (3/2)Ω(r). Le tenseur gradient de déformation d'un
-//  cisaillement simple (x,y) -> (x + γy, y) a pour valeurs propres
-//  (γ/2 ± √(1+(γ/2)²)) : après un temps τ (γ = Sτ), le rapport d'aspect
-//  résultant d'un blob initialement isotrope est √(1+(Sτ)²). C'est cette loi
-//  — pas un facteur ad hoc — qui pilote l'élongation azimutale des filaments
-//  ci-dessous : basse fréquence de bruit le long de l'écoulement (ê_φ, axe
-//  long) et haute fréquence en travers (axe court), aire du noyau conservée.
-//
-//  La cohérence transverse (across-field) est étiquetée par un label de flux
-//  poloïdal ψ(r) = r^p (p = fluxPower ≈ 3/4, forme standard d'un champ
-//  poloïdal faible threading un tore d'accrétion — tores de Fishbone-Moncrief
-//  / De Villiers-Hawley-Krolik) : le bruit varie doucement le long des lignes
-//  de champ, approximant l'organisation en rubans/canaux de la MRI (instabilité
-//  magnétorotationnelle) observée dans les simulations GRMHD.
-// =============================================================================
 __device__ __forceinline__ float dev_shearAspect(float r, const GpuParams& p) {
     const float Om     = (float)dev_orbitalOmega(r, p.M, p.a);
-    const float S      = 1.5f * Om;                                    // cisaillement képlérien
+    const float S      = 1.5f * Om;
     const float OmPeak = (float)dev_orbitalOmega(p.diskPeakR, p.M, p.a);
     const float tau    = (float)p.shearWindup * (2.0f * (float)BH_PI) / fmaxf(OmPeak, 1e-6f);
     const float St     = (float)p.shearGain * S * tau;
@@ -454,15 +352,8 @@ __device__ float dev_mhdDensityFactor(double r, double sinT, double cosT, double
                                       const GpuParams& p) {
     const float rf = (float)r;
 
-    // Label de flux poloïdal (coordonnée "across-field", axe court du repère
-    // de cisaillement) : varie doucement en r, sert d'axe transverse.
     const float psi = __powf(fmaxf(rf, 1e-3f), (float)p.fluxPower);
 
-    // Coordonnée le long de l'écoulement (≈ ê_φ local) : arc azimutal
-    // co-tournant, pré-cisaillé de shearWindup tours orbitaux (au rayon de
-    // pic) — les rayons petits (Ω grand) accumulent davantage de cisaillement
-    // que les rayons grands : c'est la rotation différentielle elle-même qui
-    // enroule/étire le motif, pas une simple rotation rigide de bloc.
     const float Om      = (float)dev_orbitalOmega(r, p.M, p.a);
     const float OmPeak  = (float)dev_orbitalOmega(p.diskPeakR, p.M, p.a);
     const float tauWind = (float)p.shearWindup * (2.0f * (float)BH_PI) / fmaxf(OmPeak, 1e-6f);
@@ -472,8 +363,6 @@ __device__ float dev_mhdDensityFactor(double r, double sinT, double cosT, double
 
     const float aspect = dev_shearAspect(rf, p);
     const float fr = (float)p.noiseFreq;
-    // Fréquence anisotrope : basse le long de l'écoulement (filaments longs et
-    // fins), élevée en travers — aire du noyau de bruit ~conservée (aspect × 1/aspect).
     const float nx = sAlong * (fr / aspect);
     const float ny = psi    * (fr * aspect);
     const float nz = (float)cosT * rf * fr + (float)p.noiseEvolution * (float)p.animTime;
@@ -489,39 +378,24 @@ __device__ float dev_mhdDensityFactor(double r, double sinT, double cosT, double
     return fil;
 }
 
-// --- Densité de gaz : enveloppe radiale × profil vertical gaussien × MHD -------
-// Géométrie volumétrique : demi-épaisseur H(r)=0.05 r, de l'ISCO à r=25 ;
-// filaments de plasma par turbulence MHD anisotrope (dev_mhdDensityFactor).
 __device__ float dev_plasmaDensity(double r, double sinT, double cosT, double phi,
                                    const GpuParams& p) {
     const float rf = (float)r;
     if (rf <= (float)p.isco || rf >= 25.0f) return 0.0f;
 
-    const float H = 0.05f * rf;                       // demi-épaisseur hyperbolique
-    const float z = rf * (float)cosT;                 // hauteur sur le plan équatorial
+    const float H = 0.05f * rf;
+    const float z = rf * (float)cosT;
     const float vert = __expf(-(z * z) / (2.0f * H * H));
 
     const float ri    = (float)p.isco;
-    const float inner = dev_clampf((rf - ri) / (0.5f * ri), 0.0f, 1.0f);   // montée à l'ISCO
-    const float outer = dev_clampf((25.0f - rf) / 4.0f, 0.0f, 1.0f);       // extinction à r=25
+    const float inner = dev_clampf((rf - ri) / (0.5f * ri), 0.0f, 1.0f);
+    const float outer = dev_clampf((25.0f - rf) / 4.0f, 0.0f, 1.0f);
     const float rad   = inner * outer * __powf(ri / rf, 0.5f);             // chute ~ r^{-1/2}
 
     const float fil = dev_mhdDensityFactor(r, sinT, cosT, phi, p);
     return vert * rad * fil;
 }
 
-// --- Backend procédural device de l'interface PlasmaState (cf. Plasma.hpp) ----
-// Miroir exact de Renderer::sampleProceduralPlasma() (CPU) : même interface,
-// même sémantique de validité (seuil 1e-4), mêmes formules d'orbite. Les deux
-// backends sont volontairement gardés structurellement parallèles — c'est la
-// divergence CPU/CUDA qui a produit les deux bugs physiques de cette session
-// (double comptage g⁴ côté CPU, calibration de luminance côté CUDA).
-//
-// PlasmaState est un POD à membres scalaires : son constructeur par défaut
-// implicite est utilisable en code device, la struct est donc partagée telle
-// quelle entre les deux backends (pas de duplication de définition).
-//
-// B4 est ici aussi un champ JOUET (toroïdal) — pas une sortie GRMHD réelle.
 __device__ PlasmaState dev_sampleProceduralPlasma(double r, double sinT, double cosT,
                                                    double phi, const GpuParams& p) {
     PlasmaState ps;
@@ -539,16 +413,13 @@ __device__ PlasmaState dev_sampleProceduralPlasma(double r, double sinT, double 
     ps.B4[0] = 0.0;
     ps.B4[1] = 0.0;
     ps.B4[2] = 0.0;
-    ps.B4[3] = Omega * ut;   // toy field, même direction que le flot
+    ps.B4[3] = Omega * ut;
 
-    ps.Theta_e = 0.0;        // non peuplé avant l'étape 2 (prescription R-beta)
+    ps.Theta_e = 0.0;
 
     return ps;
 }
 
-// =============================================================================
-//  Couleur : LUT de Planck, ciel procédural / texturé
-// =============================================================================
 __device__ __forceinline__ double3 dev_planckColor(double T, const float3* lut, const GpuParams& p) {
     const double t = clampd(T, p.lutTmin, p.lutTmax);
     const double f = (t - p.lutTmin) * p.lutInvStep;
@@ -615,48 +486,29 @@ __device__ double3 dev_skyColor(double dx, double dy, double dz, const float3* s
     return col;
 }
 
-// --- Position pseudo-cartésienne de Kerr (oblate sphéroïdale) ------------------
-// Sert au calcul du pas géométrique ds et n'altère pas la géodésique en BL.
 __device__ __forceinline__ double3 dev_kerrCartesian(double r, double sinT, double cosT,
                                                      double phi, double a) {
     const double R = sqrt(r * r + a * a);
     return make_double3(R * sinT * cos(phi), R * sinT * sin(phi), r * cosT);
 }
 
-// =============================================================================
-//  Tracé arrière d'un rayon : RAYMARCHING VOLUMÉTRIQUE + transfert radiatif.
-//
-//  La géodésique RKF45 (double, Carter conservé) est intégrée pas à pas ; à
-//  chaque pas accepté tombant dans le volume du disque, on résout l'équation de
-//  transfert dI/dλ = j - χ I sur le segment. Le photon TRAVERSE le volume sans
-//  être interrompu (pas de break à la première intersection) ; on accumule
-//  l'émission en composition front-to-back jusqu'à saturation optique ou sortie.
-// =============================================================================
 __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const float3* sky,
                                  const GpuParams& p) {
-    (void)lut;                                   // LUT non utilisée : couleur via Planck RVB direct
+    (void)lut;
     GState y = ph.s;
     const double E = ph.E, Lz = ph.Lz, K0 = ph.K;
 
     const double rStop = p.rPlus * (1.0 + p.horizonMargin);
     const double atol = p.tolerance, rtol = p.tolerance;
 
-    // Constantes du transfert radiatif (unités du moteur). emit/abs = fonction
-    // source ; la densité s'annule dans S et ne pilote que la profondeur optique.
-    // diskOpacity ↑ rend la face avant optiquement épaisse → l'émission sature à la
-    // fonction source et les filaments restent contrastés dans la zone très brillante ;
-    // diskExposure module globalement la luminosité du disque (anti-saturation bleu).
-    const float kAbs       = (float)p.diskOpacity;                 // χ = kAbs · densité
+    const float kAbs       = (float)p.diskOpacity;
     const float kSrc       = (float)(p.diskGain * p.diskExposure); // j/χ = kSrc · g⁴ · Planck(T_obs)
-    const float marchStep  = 0.05f;                               // pas λ max imposé dans le volume
+    const float marchStep  = 0.05f;
     const float3 chi       = dev_opacitySpectrum(p);               // χ_λ/χ0 par canal (R,G,B)
 
     double h = p.stepInitial;
     double maxDrift = 0.0;
 
-    // Accumulateurs du transfert radiatif (front-to-back), vectoriels : chaque
-    // canal a sa PROPRE transmittance (opacité chromatique, cf. dev_opacitySpectrum)
-    // — un vrai transfert radiatif multi-bande, pas un scalaire gris repeint en RVB.
     double3 Iacc  = make_double3(0.0, 0.0, 0.0);
     double3 trans = make_double3(1.0, 1.0, 1.0);
     bool    hitDisk = false, escaped = false, fellIn = false;
@@ -666,15 +518,9 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
         const double r = y.r;
         double hMaxEff = clampd(0.3 * (r - p.rPlus), p.stepMin, p.stepMax);
 
-        // Raffinement du pas à l'approche / dans le volume du disque (|cosθ|<0.15
-        // et ISCO ≤ r ≤ 25) pour échantillonner finement la couche mince.
         if (p.diskEnabled && r >= p.isco && r <= 25.0 && fabs(cos(y.theta)) < 0.15)
             hMaxEff = fmin(hMaxEff, (double)marchStep);
 
-        // Corridor de la sphère de photons : raffinement du pas quel que soit
-        // l'angle d'incidence (pas seulement dans le plan du disque), pour bien
-        // résoudre l'enroulement Δφ des rayons quasi-critiques — indispensable
-        // pour capturer les sous-anneaux n≥2,3 (photons faisant plusieurs tours).
         if (r <= p.photonRingRadius)
             hMaxEff = fmin(hMaxEff, p.photonRingStep);
 
@@ -693,7 +539,6 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
 
         const GState yNew = y5;
 
-        // --- Échantillon volumétrique au milieu du segment -----------------------
         if (p.diskEnabled && (trans.x > 0.003 || trans.y > 0.003 || trans.z > 0.003)) {
             const double rm   = 0.5 * (y.r + yNew.r);
             const double thm  = 0.5 * (y.theta + yNew.theta);
@@ -703,7 +548,6 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
 
             if (ps.valid) {
                 const float dens = (float)ps.rho;
-                // Longueur géométrique du segment (pseudo-cartésien de Kerr).
                 const double3 c0 = dev_kerrCartesian(y.r, fmax(sin(y.theta), 1e-6),
                                                      cos(y.theta), y.phi, p.a);
                 const double3 c1 = dev_kerrCartesian(yNew.r, fmax(sin(yNew.theta), 1e-6),
@@ -718,15 +562,11 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
                 g = dev_clampf(g, 0.02f, 8.0f);
                 const float Tobs = g * Tloc;
 
-                // Fonction source : Planck(T_obs) ⊗ beaming bolométrique g⁴.
                 const float g4 = g * g * g * g;
                 const float3 B = dev_planckRGB(Tobs, p);
                 const float sScale = kSrc * g4;
                 const float3 S = make_float3(sScale * B.x, sScale * B.y, sScale * B.z);
 
-                // Transfert radiatif MULTI-BANDE : profondeur optique et
-                // transmittance propres à chaque canal (χ_λ = kAbs·dens·ds·chi_λ),
-                // I_λ += trans_λ·S_λ·(1-e^{-dτ_λ}) ; trans_λ *= e^{-dτ_λ}.
                 const float dtauR = kAbs * dens * ds * chi.x;
                 const float dtauG = kAbs * dens * ds * chi.y;
                 const float dtauB = kAbs * dens * ds * chi.z;
@@ -748,29 +588,22 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
         y = yNew;
         h = clampd(h * factor, p.stepMin, hMaxEff);
 
-        if (trans.x < 0.003 && trans.y < 0.003 && trans.z < 0.003) { break; }  // volume optiquement saturé
+        if (trans.x < 0.003 && trans.y < 0.003 && trans.z < 0.003) { break; }
         if (y.r <= rStop)                 { fellIn = true; break; }
         if (y.r >= p.rObs && y.pr > 0.0)  { escaped = true; break; }
     }
 
-    // Budget de pas épuisé sans résolution (rayon quasi critique n≥2,3 encore en
-    // train de boucler) : NE PAS retourner un pixel noir arbitraire (terminaison
-    // prématurée) — on classe le rayon selon le sens de propagation radiale au
-    // moment de la coupure (p_r > 0 : en route vers l'échappement ; p_r < 0 : en
-    // route vers l'horizon), un compromis bien plus proche de la vraie solution
-    // qu'un artefact noir pour les sous-anneaux de photons.
     if (!escaped && !fellIn && !hitDisk) {
         if (y.pr > 0.0) escaped = true; else fellIn = true;
     }
 
-    // --- Composition de l'arrière-plan derrière le volume résiduel ---------------
     GSample s;
     s.drift = maxDrift;
     s.g = gRecord;
     s.hit = hitDisk ? 1 : (fellIn ? 2 : 0);
 
     double3 bg = make_double3(0.0, 0.0, 0.0);
-    if (escaped && (trans.x > 0.0 || trans.y > 0.0 || trans.z > 0.0)) {   // ciel visible derrière le volume
+    if (escaped && (trans.x > 0.0 || trans.y > 0.0 || trans.z > 0.0)) {
         const double phiSky = y.phi + p.animAzimuth;
         const double st = sin(y.theta), ct = cos(y.theta);
         bg = dev_skyColor(st * cos(phiSky), st * sin(phiSky), ct, sky, p);
@@ -781,16 +614,7 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
     return s;
 }
 
-// =============================================================================
-//  Kernel : un thread = un pixel. Grille de base S×S (SSAA) + sur-échantillonnage
-//  ADAPTATIF ciblé sur les pixels de bord (frontière fond/horizon/disque), là où
-//  vivent les sous-anneaux de photons n≥2,3 : leur largeur en paramètre d'impact
-//  décroît exponentiellement (~e^{-2π} par tour supplémentaire, Gralla & Lupsasca
-//  2020), une grille SxS régulière ne les touche presque jamais. On ne paie le
-//  sur-échantillonnage que là où un vrai bord est détecté — coût quasi nul sur
-//  le reste de l'image (ciel, disque, horizon uniformes).
-// =============================================================================
-constexpr int kMaxBaseSamples = 64;   // borne statique : S ≤ 8 (clampé côté hôte)
+constexpr int kMaxBaseSamples = 64;
 
 __global__ void renderKernel(GpuParams p, const float3* lut, const float3* sky,
                              double3* fb, double* gOut, int* hitOut, double* carterOut,
@@ -801,8 +625,6 @@ __global__ void renderKernel(GpuParams p, const float3* lut, const float3* sky,
 
     const int S = p.S;
 
-    // --- 1) Grille de base S×S (SSAA classique) ; seul le type de contact (hit)
-    // est mémorisé par sous-échantillon, pour la détection de bord ci-dessous.
     int     baseHit[kMaxBaseSamples];
     double cg = 0.0, cdrift = 0.0;
     int chit = 0;
@@ -821,9 +643,6 @@ __global__ void renderKernel(GpuParams p, const float3* lut, const float3* sky,
         }
     }
 
-    // --- 2) Détection de bord : deux sous-échantillons voisins tombent dans des
-    // catégories différentes (fond / disque / horizon) => transition franche,
-    // signature du bord critique de l'ombre où se cachent les sous-anneaux.
     bool edge = false;
     for (int sj = 0; sj < S && !edge; ++sj) {
         for (int si = 0; si < S && !edge; ++si) {
@@ -833,8 +652,6 @@ __global__ void renderKernel(GpuParams p, const float3* lut, const float3* sky,
         }
     }
 
-    // --- 3) Sur-échantillonnage additionnel, jitteré, UNIQUEMENT sur les pixels
-    // de bord : ES×ES rayons de plus, moyennés avec la grille de base.
     int nExtra = 0;
     if (edge && p.ringSupersample > 0) {
         const int ES = p.ringSupersample;
@@ -862,22 +679,13 @@ __global__ void renderKernel(GpuParams p, const float3* lut, const float3* sky,
 
 }  // namespace cuda_detail
 
-// =============================================================================
-//  Hôte : Renderer::renderGPU — prépare la scène, lance le kernel par bandes,
-//  rapatrie l'image HDR linéaire et les cartes scientifiques.
-// =============================================================================
 RenderResult Renderer::renderGPU() const {
     using namespace cuda_detail;
     const int W = cfg_.width, H = cfg_.height;
 
-    // --- Paramètres de la scène --------------------------------------------------
     GpuParams p;
     p.M = bh_.mass();  p.a = bh_.spin();
     p.W = W;  p.H = H;
-    // p.S borne à 8 : le noyau mémorise S² catégories de contact par thread
-    // dans un tableau local de taille statique (kMaxBaseSamples = 64) pour la
-    // détection de bord (cf. renderKernel) — au-delà, utiliser plutôt
-    // ringSupersample pour affiner davantage les pixels de bord détectés.
     {
         const int sReq = (cfg_.samples < 1) ? 1 : cfg_.samples;
         p.S = (sReq > 8) ? 8 : sReq;
@@ -899,8 +707,6 @@ RenderResult Renderer::renderGPU() const {
     p.isco = isco_;  p.diskOuter = cfg_.diskOuter;
     p.diskShapeMax = diskShapeMax_;  p.diskTempScaleK = cfg_.diskTempScaleK;
     p.diskPeakR = diskPeakR_;  p.diskGain = 5.0;   // kDiskGain (cf. Renderer.cpp)
-    // Calibration de dev_planckB : ramène B(546nm, diskTempScaleK) à 1, même
-    // convention de luminance que la LUT CPU (cf. commentaire de dev_planckRGB).
     {
         const double c2 = 1.43877688e7;
         const double x = c2 / (546.0 * cfg_.diskTempScaleK);
@@ -920,16 +726,6 @@ RenderResult Renderer::renderGPU() const {
     p.tolerance = cfg_.tolerance;  p.stepInitial = cfg_.stepInitial;
     p.stepMax = cfg_.stepMax;  p.stepMin = cfg_.stepMin;
     p.horizonMargin = cfg_.horizonMargin;  p.rPlus = rPlus_;  p.safety = 0.9;
-    // Budget de pas dédié au GPU (gpuMaxSteps), plus généreux que le défaut CPU :
-    // les rayons quasi critiques (sous-anneaux n≥2,3) ont besoin de beaucoup plus
-    // de pas pour boucler plusieurs fois autour de la sphère de photons sans
-    // terminaison prématurée (cf. dev_traceRay). Seuls CES rayons consomment
-    // vraiment ce budget élargi (la grande majorité — fond, disque, horizon
-    // direct — termine tôt, budget ou pas) ; en revanche le raffinement du PAS
-    // dans le corridor r ≤ photonRingRadius (dev_traceRay) est, lui, payé par
-    // TOUT rayon qui traverse cette zone (pas seulement les quasi-critiques) —
-    // c'est le vrai coût GPU de cette fonctionnalité. Si le temps de rendu
-    // explose, relâcher photonRingStep (ex. 0.01 -> 0.03-0.05) en premier.
     p.maxSteps = (cfg_.gpuMaxSteps > 0) ? cfg_.gpuMaxSteps : cfg_.maxSteps;
 
     p.photonRingRadius = cfg_.photonRingRadius;
@@ -942,7 +738,6 @@ RenderResult Renderer::renderGPU() const {
     p.starDensity = cfg_.starDensity;  p.starBrightness = cfg_.starBrightness;
     p.animTime = animTime_;  p.animAzimuth = animAzimuth_;
 
-    // --- Table de permutation de Perlin (régénérée à l'identique du CPU) ---------
     {
         int perm[256];
         for (int i = 0; i < 256; ++i) perm[i] = i;
@@ -957,7 +752,6 @@ RenderResult Renderer::renderGPU() const {
         CUDA_CHECK(cudaMemcpyToSymbol(c_perm, p512, sizeof(p512)));
     }
 
-    // --- LUT couleur (Vec3 double -> float3) -------------------------------------
     std::vector<float3> lutHost(tempLUT_.size());
     for (size_t i = 0; i < tempLUT_.size(); ++i)
         lutHost[i] = make_float3((float)tempLUT_[i].x, (float)tempLUT_[i].y, (float)tempLUT_[i].z);
@@ -965,7 +759,6 @@ RenderResult Renderer::renderGPU() const {
     CUDA_CHECK(cudaMalloc(&d_lut, lutHost.size() * sizeof(float3)));
     CUDA_CHECK(cudaMemcpy(d_lut, lutHost.data(), lutHost.size() * sizeof(float3), cudaMemcpyHostToDevice));
 
-    // --- Texture de ciel optionnelle (triplets RGB -> float3) --------------------
     float3* d_sky = nullptr;
     if (skyLoaded_ && skyW_ > 0 && skyH_ > 0) {
         std::vector<float3> skyHost((size_t)skyW_ * skyH_);
@@ -975,7 +768,6 @@ RenderResult Renderer::renderGPU() const {
         CUDA_CHECK(cudaMemcpy(d_sky, skyHost.data(), skyHost.size() * sizeof(float3), cudaMemcpyHostToDevice));
     }
 
-    // --- Tampons de sortie sur le GPU --------------------------------------------
     const size_t N = (size_t)W * H;
     double3* d_fb = nullptr;  double* d_g = nullptr;  int* d_hit = nullptr;  double* d_carter = nullptr;
     CUDA_CHECK(cudaMalloc(&d_fb,     N * sizeof(double3)));
@@ -1010,7 +802,6 @@ RenderResult Renderer::renderGPU() const {
     cudaFree(d_fb); cudaFree(d_g); cudaFree(d_hit); cudaFree(d_carter);
     cudaFree(d_lut); if (d_sky) cudaFree(d_sky);
 
-    // --- Construction du RenderResult (image HDR + cartes) ----------------------
     RenderResult out;
     out.width = W; out.height = H;
     out.image = Image(W, H);
