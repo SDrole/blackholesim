@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Setup + build + test rapide sur un pod GPU A100 (RunPod/Vast.ai, image
-# nvidia/cuda:*-devel-ubuntu*). A lancer une fois le repo cloné sur le pod :
-#   bash setup_a100.sh
+# Build and run a quick CUDA smoke test on an NVIDIA A100 environment.
+# Intended for a CUDA "devel" Ubuntu image on a GPU host.
 set -euo pipefail
 
-echo "=== 1/4 : dependances ==="
+echo "=== 1/4: dependencies ==="
 apt-get update -qq
 apt-get install -y -qq cmake build-essential
 
-echo "=== 2/4 : verification GPU / CUDA ==="
+echo "=== 2/4: GPU / CUDA check ==="
 nvcc --version
 nvidia-smi --query-gpu=name,compute_cap --format=csv
-echo "-> compute_cap doit etre 8.0 pour une A100 (sinon corriger CUDA_ARCHITECTURES dans CMakeLists.txt)"
+echo "-> An A100 should report compute capability 8.0."
+echo "-> Adjust CUDA_ARCHITECTURES in CMakeLists.txt for another GPU target."
 
-echo "=== 3/4 : compilation (Release, CUDA auto-detecte) ==="
+echo "=== 3/4: Release build (CUDA auto-detected) ==="
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-echo "=== 4/4 : rendu test rapide (480x270, doit utiliser le backend GPU) ==="
+echo "=== 4/4: quick GPU render (480x270) ==="
 ./build/blackholesim 480 270 1 0.9 output
 
-echo ""
-echo "OK -- build + rendu GPU fonctionnels. Verifie ci-dessus la ligne 'Backend'"
-echo "dans la sortie du programme : elle doit afficher GPU, pas CPU."
+echo
+echo "OK -- build and smoke render completed."
+echo "Check the program output above and confirm that the selected backend is GPU."
