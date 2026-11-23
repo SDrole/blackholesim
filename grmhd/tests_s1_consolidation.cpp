@@ -423,7 +423,7 @@ void testConvergenceOrder() {
             const double order = std::log2(prevErr / e);
             const bool bothAboveFloor = (e > 100.0 * kFloor) && (prevErr > 100.0 * kFloor);
             std::printf("   ordre = %+.2f %s", order,
-                        bothAboveFloor ? "(regime troncature)" : "(plancher atteint)");
+                        bothAboveFloor ? "(truncation regime)" : "(error floor reached)");
             if (bothAboveFloor) {
                 bestOrder = std::max(bestOrder, order);
                 measuredInTruncationRegime = true;
@@ -434,12 +434,12 @@ void testConvergenceOrder() {
     }
     (void)prevDl;
 
-    report("B2a mesure effectuee dans le regime de troncature",
+    report("B2a measurement performed in the truncation regime",
            measuredInTruncationRegime ? 0.0 : 1.0, 1e-15);
     report("B2b ordre de convergence observe >= 3",
            (bestOrder >= 3.0) ? 0.0 : 1.0, 1e-15);
-    std::printf("       (ordre max observe hors plancher : %.2f ; le plateau final a\n"
-                "        ~1e-12 vient du plancher de differentiation des Christoffels,\n"
+    std::printf("       (maximum order observed above the floor: %.2f; final plateau at\n"
+                "        ~1e-12 comes from the Christoffel differentiation floor,\n"
                 "        this is expected and not a failure)\n", bestOrder);
 }
 
@@ -460,7 +460,7 @@ int main() {
 
     std::printf("---------------------------------------------------------------------\n");
     if (g_failures == 0)
-        std::printf("  CONSOLIDATION S1 VALIDEE -- la geometrie est verrouillee, S2 peut demarrer.\n");
+        std::printf("  S1 CONSOLIDATION VALIDATED -- geometry is locked; S2 may start.\n");
     else
         std::printf("  %d FAILURE(S) -- geometry is not locked; do not start S2.\n", g_failures);
     std::printf("=====================================================================\n");
