@@ -52,7 +52,7 @@ void testInverse() {
             }
         }
     }
-    report("T1 inverse metrique  g*ginv = I", worst, 1e-10);
+    report("T1 inverse metric g*ginv = I", worst, 1e-10);
 }
 
 //
@@ -96,7 +96,7 @@ void testMetricCompatibility() {
             }
         }
     }
-    report("T3 compatibilite metrique  grad_g = 0", worst, 1e-7);
+    report("T3 metric compatibility grad_g = 0", worst, 1e-7);
 }
 
 //
@@ -111,7 +111,7 @@ void testChristoffelSymmetry() {
                 for (int nu = 0; nu < 4; ++nu)
                     worst = std::max(worst, std::fabs(G[l][mu][nu] - G[l][nu][mu]));
     }
-    report("T4 symetrie Gamma^l_{mu nu} = Gamma^l_{nu mu}", worst, 1e-14);
+    report("T4 symmetry Gamma^l_{mu nu} = Gamma^l_{nu mu}", worst, 1e-14);
 }
 
 //
@@ -319,7 +319,7 @@ void testGrid() {
     const std::size_t a = g.idx(3, 4, 5), b = g.idx(3, 4, 6), c2 = g.idx(4, 4, 5);
     if (a == b || a == c2) worst = 1.0;
 
-    report("S0 grille MKS (bornes, theta valide, indexation)", worst, 1e-15);
+    report("S0 MKS grid (bounds, valid theta, indexing)", worst, 1e-15);
     std::printf("       (r_inner = %.4f, r+ = %.4f -> boundary INSIDE horizon)\n", r0, rp);
 }
 
@@ -433,7 +433,7 @@ void testKerrParameterDomain() {
         double rp = 0.0, rm = 0.0;
         if (ks.parametersValid() || ks.horizons(rp, rm)) {
             allRejected = false;
-            std::printf("       (%s : ACCEPTE A TORT)\n", b.label);
+            std::printf("       (%s : WRONGLY ACCEPTED)\n", b.label);
         }
         // Les formes commodes doivent renvoyer NaN, pas une valeur plausible.
         if (!std::isnan(ks.horizonOuter()) || !std::isnan(ks.horizonInner()))
@@ -447,7 +447,7 @@ void testKerrParameterDomain() {
 
 int main() {
     std::printf("=====================================================================\n");
-    std::printf("  GRMHD S0-S1 : grille MKS + metrique de Kerr-Schild\n");
+    std::printf("  GRMHD S0-S1: MKS grid + Kerr-Schild metric\n");
     std::printf("=====================================================================\n");
 
     testInverse();
@@ -464,7 +464,7 @@ int main() {
 
     std::printf("---------------------------------------------------------------------\n");
     if (g_failures == 0) {
-        std::printf("  TOUS LES TESTS PASSENT -- S0/S1 valides, S2 peut demarrer.\n");
+        std::printf("  ALL TESTS PASS -- S0/S1 validated; S2 may start.\n");
     } else {
         std::printf("  %d FAILED TEST(S) -- do not proceed to S2.\n", g_failures);
     }
