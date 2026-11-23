@@ -100,7 +100,7 @@ void testPhysicalFlux() {
             const double sc = std::max(std::fabs(expect), 1e-30);
             worst = std::max(worst, std::fabs(F[2] - expect) / sc);
         }
-        report("A3 transverse : F_{S_y} = S_y v^x (pas de p hors diagonale)", worst, 1e-15);
+        report("A3 transverse : F_{S_y} = S_y v^x (no pressure term off diagonal)", worst, 1e-15);
     }
 
     // A4 — IDENTITÉ DE FLUX INDÉPENDANTE : F_tau = S^x - D v^x doit égaler
@@ -213,7 +213,7 @@ void testCharacteristics() {
                 }
             }
         }
-        std::printf("       causalite verifiee sur %d etats (avec vitesse transverse)\n", n);
+        std::printf("       causality verified on %d states (including transverse velocity)\n", n);
         reportBool("B4 |lambda| < 1 partout (causalite)", worstAbs < 1.0);
 
         // Contre-exemple explicite : montre que v+c_s violerait la causalite.
@@ -268,7 +268,7 @@ void testHLLE() {
         double worst = 0.0;
         for (int k = 0; k < 5; ++k)
             worst = std::max(worst, std::fabs(Fn[k] - Fp[k]) / std::max(std::fabs(Fp[k]), 1e-30));
-        report("C2 supersonique droite : flux = amont gauche exact", worst, 1e-15);
+        report("C2 right-going supersonic: flux = exact left upwind flux", worst, 1e-15);
     }
 
     // C3 — symetrie : inverser gauche/droite et le signe de v doit changer le
@@ -343,7 +343,7 @@ void testGlobalConservation() {
     const double eD = std::fabs(D1 - D0) / std::fabs(D0);
     const double eS = std::fabs(S1[0] - S0[0]) / std::max(std::fabs(S0[0]), 1e-30);
     const double eT = std::fabs(T1 - T0) / std::fabs(T0);
-    std::printf("       domaine periodique, %d pas : dSum(D)=%.3e dSum(Sx)=%.3e dSum(tau)=%.3e\n",
+    std::printf("       periodic domain, %d steps : dSum(D)=%.3e dSum(Sx)=%.3e dSum(tau)=%.3e\n",
                 nsteps, eD, eS, eT);
     std::printf("       floors: rho=%lld u=%lld | coldAtMachinePrec=%lld | recoveryFail=%lld\n",
                 s.counters().rhoFloored, s.counters().uFloored,
@@ -351,12 +351,12 @@ void testGlobalConservation() {
 
     report("D1 conservation de sum(D) (periodique)", eD, 1e-12);
     report("D2 conservation de sum(tau) (periodique)", eT, 1e-12);
-    reportBool("D3 aucun floor necessaire sur un probleme lisse",
+    reportBool("D3 no floor needed on a smooth problem",
                s.counters().totalFloors() == 0);
-    reportBool("D4 aucun echec de recovery", s.counters().recoveryFailures == 0);
-    reportBool("D5 aucun fallback de reconstruction (instrumente)",
+    reportBool("D4 no primitive-recovery failure", s.counters().recoveryFailures == 0);
+    reportBool("D5 no reconstruction fallback (instrumented)",
                s.counters().reconstructionFallbacks == 0);
-    reportBool("D6 aucune resynchronisation U<-P (schema reste conservatif)",
+    reportBool("D6 no U<-P resynchronization (scheme remains conservative)",
                s.counters().conservativeResyncs == 0);
     std::printf("       reconstructionFallbacks=%lld  conservativeResyncs=%lld\n",
                 s.counters().reconstructionFallbacks, s.counters().conservativeResyncs);
@@ -387,7 +387,7 @@ void testConservationContract() {
     // n'a eu lieu ne doivent pas avoir subi d'aller-retour parasite. On le
     // teste via le compteur : zero resynchronisation => U intact par
     // construction.
-    reportBool("D7a aucune resynchronisation sur un probleme sain",
+    reportBool("D7a no resynchronization on a healthy problem",
                s.counters().conservativeResyncs == 0);
 
     // Comparaison directe : on refait un recovery sur un etat GELE et on
@@ -408,8 +408,8 @@ void testConservationContract() {
             u2[i].S[0] != u1[i].S[0]) bitIdentical = false;
     }
     (void)u0;
-    reportBool("D7b un pas de duree nulle laisse U bit-a-bit identique", bitIdentical);
-    reportBool("D7c aucun echec de recovery (politique Abort active)", t.ok());
+    reportBool("D7b zero-duration step leaves U bit-identical", bitIdentical);
+    reportBool("D7c no recovery failure (Abort policy active)", t.ok());
 }
 
 // =============================================================================
@@ -464,7 +464,7 @@ void testForcedRecoveryFailureAbort() {
     // Un pas sain d'abord, pour partir d'un état non trivial.
     const double dt = 0.2 * s.dx();
     const StepResult first = s.step(dt);
-    reportBool("D8a un pas sain reussit avant injection", first.ok && s.ok());
+    reportBool("D8a healthy step succeeds before fault injection", first.ok && s.ok());
 
     const double tBefore = s.time();
     const int victim = Solver1D::NG + 7;
@@ -476,8 +476,8 @@ void testForcedRecoveryFailureAbort() {
 
     const StepResult r = s.step(dt);
 
-    reportBool("D8b le pas est signale en echec", !r.ok && !s.ok());
-    reportBool("D8c le temps n'a PAS avance",
+    reportBool("D8b failed step is reported", !r.ok && !s.ok());
+    reportBool("D8c time did NOT advance",
                s.time() == tBefore);
 
     // ROLLBACK : l'état entier doit être identique à l'instantané, y compris
@@ -492,24 +492,24 @@ void testForcedRecoveryFailureAbort() {
     // ATTENTION : ce test n'est PAS discriminant (cf. en-tête de section) —
     // l'échec survient à l'étage 1, avant toute mutation. Le rollback est testé
     // par D8h.
-    reportBool("D8d etat intact (echec precoce, etage 1 -- NON discriminant)", identical);
+    reportBool("D8d state intact (early stage-1 failure -- NON-discriminating)", identical);
     // Le compteur « evolution acceptee » est RESTAURE par le rollback ; c'est la
     // telemetrie des tentatives rejetees qui porte l'echec. Les deux
     // significations sont disjointes.
-    reportBool("D8e l'echec est comptabilise (telemetrie rejetee)",
+    reportBool("D8e failure is counted in rejected-attempt telemetry",
                s.rejectedTelemetry().during.recoveryFailures > 0
                && s.rejectedTelemetry().rejectedSteps == 1);
     reportBool("D8e2 compteurs 'acceptes' restaures par le rollback",
                s.counters().recoveryFailures == recFailBefore);
-    reportBool("D8f aucune resynchronisation non conservative sous Abort",
+    reportBool("D8f no non-conservative resynchronization under Abort",
                s.counters().conservativeResyncs == 0);
-    std::printf("       Abort : failure='%s' cellule=%d etage=%d | t inchange=%.17g\n",
+    std::printf("       Abort : failure='%s' cell=%d stage=%d | t unchanged=%.17g\n",
                 toString(r.failure), r.failedCell, r.failedStage, s.time());
 
     // advanceTo ne doit pas non plus « avaler » l'échec.
     const double tBefore2 = s.time();
     const int nsteps = s.advanceTo(s.time() + 10.0 * dt);
-    reportBool("D8g advanceTo s'arrete immediatement et n'avance pas le temps",
+    reportBool("D8g advanceTo stops immediately and does not advance time",
                nsteps == 0 && s.time() == tBefore2);
 }
 
@@ -541,15 +541,15 @@ void testAbortRollbackAtStage2() {
         double maxDiff = 0.0;
         for (size_t i = 0; i < a.size(); ++i)
             maxDiff = std::max(maxDiff, std::fabs(a[i].tau - b[i].tau));
-        reportBool("D8h0 controle : un pas sain modifie bien l'etat", maxDiff > 1e-12);
+        reportBool("D8h0 control: a healthy step actually changes the state", maxDiff > 1e-12);
     }
 
     s.injectRecoveryFaultForTest(2, Solver1D::NG + 11);
     const StepResult r = s.step(dt);
 
-    reportBool("D8h1 l'echec est bien detecte a l'ETAGE 2",
+    reportBool("D8h1 failure is correctly detected at STAGE 2",
                !r.ok && r.failedStage == 2 && r.failedCell == Solver1D::NG + 11);
-    reportBool("D8h2 le temps n'a pas avance", s.time() == tBefore);
+    reportBool("D8h2 time did not advance", s.time() == tBefore);
 
     // Comparaison bit à bit : le rollback restaure l'instantané exact, il ne
     // « recalcule » pas un état voisin.
@@ -565,7 +565,7 @@ void testAbortRollbackAtStage2() {
     }
     reportBool("D8h3 U restaure a l'identique (bit a bit)", maxDU == 0.0);
     reportBool("D8h4 P restaure a l'identique (bit a bit)", maxDP == 0.0);
-    std::printf("       Rollback etage 2 : max|dU|=%.3e  max|dP|=%.3e  t inchange=%.17g\n",
+    std::printf("       Stage-2 rollback : max|dU|=%.3e  max|dP|=%.3e  t inchange=%.17g\n",
                 maxDU, maxDP, s.time());
 }
 
@@ -609,7 +609,7 @@ void testDiagnosticsAreTransactional() {
         const long long before = ctrl.counters().totalFloors();
         ctrl.injectConservedForTest(floorCell, lowDensityCell());
         const StepResult cr = ctrl.step(0.2 * ctrl.dx());
-        reportBool("D11a controle : l'injection produit bien des floors a l'etage 1",
+        reportBool("D11a control: injection really produces floors at stage 1",
                    cr.ok && ctrl.counters().totalFloors() > before);
     }
 
@@ -634,9 +634,9 @@ void testDiagnosticsAreTransactional() {
     s.injectRecoveryFaultForTest(2, faultCell);
     const StepResult r = s.step(dt);
 
-    reportBool("D11b echec bien signale a l'etage 2",
+    reportBool("D11b failure correctly reported at stage 2",
                !r.ok && r.failedStage == 2 && r.failedCell == faultCell);
-    reportBool("D11c le temps n'a pas avance", s.time() == tBefore);
+    reportBool("D11c time did not advance", s.time() == tBefore);
 
     // Etat : bit a bit.
     double maxDU = 0.0;
@@ -664,11 +664,11 @@ void testDiagnosticsAreTransactional() {
     const RejectedAttemptTelemetry& tel = s.rejectedTelemetry();
     reportBool("D11f la tentative rejetee est comptee",
                tel.rejectedSteps == rejected0 + 1);
-    reportBool("D11g les floors de l'etage 1 sont conserves en telemetrie",
+    reportBool("D11g stage-1 floors are retained in rejected telemetry",
                tel.during.totalFloors() > 0);
-    reportBool("D11h l'echec de recovery est en telemetrie, pas dans 'accepte'",
+    reportBool("D11h recovery failure is in rejected telemetry, not accepted counters",
                tel.during.recoveryFailures > 0);
-    std::printf("       Accepte : floors=%lld recFail=%lld | Rejete : pas=%lld floors=%lld recFail=%lld\n",
+    std::printf("       Accepted: floors=%lld recFail=%lld | Rejected: steps=%lld floors=%lld recFail=%lld\n",
                 c1.totalFloors(), c1.recoveryFailures,
                 tel.rejectedSteps, tel.during.totalFloors(), tel.during.recoveryFailures);
 }
@@ -684,9 +684,9 @@ void testForcedRecoveryFailureFallback() {
 
     const StepResult r = s.step(dt);
 
-    reportBool("D9a sous Fallback, le pas se poursuit", r.ok && s.ok());
-    reportBool("D9b le temps a avance", s.time() > tBefore);
-    reportBool("D9c l'echec est compte", s.counters().recoveryFailures > 0);
+    reportBool("D9a under Fallback, the step continues", r.ok && s.ok());
+    reportBool("D9b time advanced", s.time() > tBefore);
+    reportBool("D9c failure is counted", s.counters().recoveryFailures > 0);
     reportBool("D9d la non-conservation est comptabilisee",
                s.counters().conservativeResyncs > 0);
     std::printf("       Fallback : recoveryFailures=%lld  conservativeResyncs=%lld  t=%.6g\n",
@@ -704,7 +704,7 @@ void testReinitializationClearsState() {
     // Nouvelle initialisation du MÊME objet.
     s.initialize([](double x) { return mkPrim(1.0 + 0.1 * std::sin(2.0 * M_PI * x), 1.0, 0.05); });
 
-    reportBool("D10a le solveur etait bien en echec avant reinitialisation", brokenBefore);
+    reportBool("D10a solver was in a failed state before reinitialization", brokenBefore);
     reportBool("D10b initialize() remet ok_ a vrai", s.ok());
     reportBool("D10c initialize() remet les compteurs a zero",
                s.counters().recoveryFailures == 0
@@ -715,7 +715,7 @@ void testReinitializationClearsState() {
     reportBool("D10c2 initialize() remet la telemetrie rejetee a zero",
                s.rejectedTelemetry().rejectedSteps == 0
                && s.rejectedTelemetry().during.recoveryFailures == 0);
-    reportBool("D10d initialize() remet le temps a zero", s.time() == 0.0);
+    reportBool("D10d initialize() resets time to zero", s.time() == 0.0);
     // Et le solveur doit repartir normalement.
     const StepResult r = s.step(0.2 * s.dx());
     reportBool("D10e le solveur reinitialise avance normalement", r.ok && s.ok());
@@ -883,7 +883,7 @@ void testOracleSelfConvergence() {
                bestOrder >= 3.0);
     std::printf("          ordre max observe : %.2f — la forme CLOSE est donc la\n"
                 "          limite exacte de l'integration ; c'est elle qu'utilise le\n"
-                "          solveur, sans erreur de quadrature residuelle.\n", bestOrder);
+                "          solver, with no residual quadrature error.\n", bestOrder);
 
     // Impact sur les grandeurs REELLEMENT utilisees ensuite (p*, v*).
     const RiemannState L{10.0, 13.33, 0.0}, R{1.0, 1e-6, 0.0};
@@ -891,7 +891,7 @@ void testOracleSelfConvergence() {
     std::printf("       -> p* = %.15e   v* = %.15e   (residu %.2e, %d iterations)\n",
                 sol.pStar, sol.vStar, sol.residual, sol.iterations);
 
-    reportBool("F0c le garde-fou de vitesse de l'oracle ne s'est jamais declenche",
+    reportBool("F0c oracle velocity guard never triggered",
                rarefactionClampHits() == 0,
                rarefactionClampHits() == 0 ? "0 declenchement" : "le clamp a agi (!)");
 }
@@ -949,7 +949,7 @@ ShockTubeResult runShockTube(const char* label,
     if (verbose) {
         std::printf("         %-22s nx=%-4d t=%.2f CFL=%.2f | L1: rho %.3e  p %.3e  v %.3e\n",
                     label, nx, tEnd, cfl, res.l1rho, res.l1p, res.l1v);
-        std::printf("           p*=%.6e v*=%.6e | pas=%d | floors=%lld coldFlag=%lld recFail=%lld\n",
+        std::printf("           p*=%.6e v*=%.6e | steps=%d | floors=%lld coldFlag=%lld recFail=%lld\n",
                     sol.pStar, sol.vStar, steps, res.floors, res.coldFlags, res.recoveryFails);
         std::printf("           reconFallbacks=%lld  Uresyncs=%lld  solverOk=%s\n",
                     res.reconFallbacks, res.resyncs, res.solverOk ? "oui" : "NON");
@@ -996,7 +996,7 @@ void testShockTubes() {
                     decreasing ? "OUI" : "NON");
     }
     reportBool("F1 tubes a choc : erreurs finies et decroissantes", allOk);
-    reportBool("F2 aucun echec de recovery sur les tubes", totalRecFail == 0);
+    reportBool("F2 no recovery failure on shock tubes", totalRecFail == 0);
     reportBool("F2b tous les solveurs terminent sans abandon", allSolversOk);
     std::printf("       -> cumul sur tous les tubes/resolutions : floors=%lld  "
                 "reconFallbacks=%lld  Uresyncs=%lld\n",
@@ -1110,7 +1110,7 @@ void testHDF5() {
 
     const std::string path = "grmhd_s3_snapshot.h5";
     const bool wrote = writeSnapshotHDF5(s, path);
-    reportBool("H1 ecriture HDF5", wrote);
+    reportBool("H1 HDF5 write", wrote);
     if (!wrote) return;
 
     // Un writer non relu n'est pas un writer teste — et relire seulement
@@ -1140,7 +1140,7 @@ void testHDF5() {
         worst = std::max(worst, std::fabs(c.x[i] - s.xc(Solver1D::NG + i)));
     }
     report("H4 aller-retour de TOUS les datasets (RHO,UU,U1,U2,U3,x)", worst, 1e-15);
-    report("H5 temps serialise", std::fabs(c.t - s.time()) / s.time(), 1e-15);
+    report("H5 serialized time", std::fabs(c.t - s.time()) / s.time(), 1e-15);
     report("H6 gamma serialise", std::fabs(c.gam - cfg.gamma) / cfg.gamma, 1e-15);
 
     // Les attributs de provenance doivent survivre : ce sont eux qui
@@ -1152,10 +1152,10 @@ void testHDF5() {
     std::printf("       -> bhsim_stage='%s'  metric='%s'\n", c.stage.c_str(), c.metric.c_str());
     std::printf("          absent_fields='%s'\n", c.absentFields.c_str());
     std::printf("       -> NOMS/CONVENTIONS preparant iharm (prims/RHO, UU, U1..U3),\n"
-                "          ce qui n'est PAS une compatibilite snapshot iharm complete :\n"
+                "          which is NOT full iharm snapshot compatibility :\n"
                 "          il manque B1..B3, la metrique/grille FMKS et le spin, et la\n"
                 "          geometrie est 1D cartesienne. Ces manques sont declares dans\n"
-                "          le fichier lui-meme, pas seulement dans la documentation.\n");
+                "          the file itself, not only in documentation.\n");
 }
 
 }  // namespace
@@ -1194,7 +1194,7 @@ void testRiemannVacuumDomain() {
             const double newt  = 4.0 * c / (g - 1.0);       // 2(c_L+c_R)/(G-1)
             worst = std::max(worst, std::fabs(relat - newt) / newt);
         }
-        report("I1 critere de vide -> limite newtonienne de Toro", worst, 1e-6);
+        report("I1 vacuum criterion -> Toro Newtonian limit", worst, 1e-6);
     }
 
     // I2 — Le SEUIL est net et le solveur est correct JUSTE EN DESSOUS.
@@ -1229,7 +1229,7 @@ void testRiemannVacuumDomain() {
             {"double detente v=+-0.5, p=0.01", {1.0, 0.01, -0.5}, {1.0, 0.01, 0.5}},
             {"double detente v=+-0.9, p=0.01", {1.0, 0.01, -0.9}, {1.0, 0.01, 0.9}},
             {"ultra-relativiste v=+-0.999",    {1.0, 1.0,  -0.999}, {1.0, 1.0, 0.999}},
-            {"pression infime p=1e-6",         {1.0, 1e-6, -0.9}, {1.0, 1e-6, 0.9}},
+            {"tiny pressure p=1e-6",         {1.0, 1e-6, -0.9}, {1.0, 1e-6, 0.9}},
             {"asymetrique",                    {2.0, 0.02, -0.8}, {0.5, 0.005, 0.7}},
         };
         bool allRejected = true, allFlagged = true, allDetected = true;
@@ -1239,7 +1239,7 @@ void testRiemannVacuumDomain() {
             if (s.ok) { allRejected = false; std::printf("       (%s : ACCEPTE A TORT p*=%.3e)\n", c.label, s.pStar); }
             if (s.failure != RiemannFailure::VacuumFormed) allFlagged = false;
         }
-        reportBool("I3a formation de vide detectee par le critere", allDetected);
+        reportBool("I3a vacuum formation detected by criterion", allDetected);
         reportBool("I3b oracle refuse de resoudre (ok=false)", allRejected);
         reportBool("I3c cause explicite = VacuumFormed", allFlagged);
     }
@@ -1300,7 +1300,7 @@ void testRiemannMirrorSymmetry() {
             worstS = std::max(worstS, std::fabs(a.rhoPost - b.rhoPost));
         }
     }
-    report("J3 branche de choc : symetrie miroir gauche/droite", worstS, 1e-14);
+    report("J3 shock branch: left/right mirror symmetry", worstS, 1e-14);
 
     // J4 — NON-REGRESSION : les valeurs publiees ne bougent pas.
     // Ces problemes n'exercent que la branche DROITE (leur onde gauche est une
@@ -1341,7 +1341,7 @@ void testAcousticConvergence() {
     const double A  = 1e-6;              // amplitude : voir justification infra
 
     // Le fond doit etre franchement relativiste, sinon on ne teste pas grand-chose.
-    reportBool("K0 vitesse du son relativiste (c_s > 0.4 c)", cs > 0.4);
+    reportBool("K0 relativistic sound speed (c_s > 0.4 c)", cs > 0.4);
 
     auto init = [&](double x) {
         const double sx = std::sin(2.0 * M_PI * x);
@@ -1412,7 +1412,7 @@ void testAcousticConvergence() {
                worstOrder >= 1.8);
 
     // Le mode acoustique ne doit declencher AUCUN garde-fou.
-    reportBool("K3 aucun clamp caracteristique sur l'onde acoustique",
+    reportBool("K3 no characteristic clamp on acoustic wave",
                characteristicClampCounters().total() == clampsBefore);
 
     // COHERENCE (diagnostic, PAS oracle) : la vitesse du son analytique et
@@ -1431,9 +1431,9 @@ void testClampsNeverFire() {
     const CharacteristicClampCounters& c = characteristicClampCounters();
     std::printf("       cs2Clamped=%lld discNegative=%lld denomDegenerate=%lld lambdaClamped=%lld\n",
                 c.cs2Clamped, c.discNegative, c.denomDegenerate, c.lambdaClamped);
-    reportBool("L1 aucun garde-fou de characteristicSpeeds n'a agi", c.total() == 0);
+    reportBool("L1 no characteristicSpeeds guard activated", c.total() == 0);
     std::printf("       clamp de detente de l'oracle : %lld\n", rarefactionClampHits());
-    reportBool("L2 aucun clamp de vitesse dans l'oracle de detente",
+    reportBool("L2 no velocity clamp in rarefaction oracle",
                rarefactionClampHits() == 0);
 }
 
@@ -1451,7 +1451,7 @@ int main() {
     std::printf("\n  D -- conservation globale discrete et contrat sur U\n");
     testGlobalConservation();
     testConservationContract();
-    std::printf("\n  D8/D9/D10 -- chemins d'echec REELLEMENT forces\n");
+    std::printf("\n  D8/D9/D10 -- genuinely forced failure paths\n");
     testForcedRecoveryFailureAbort();
     testAbortRollbackAtStage2();
     testDiagnosticsAreTransactional();
@@ -1467,13 +1467,13 @@ int main() {
     testLorentzBoostInvariance();
     std::printf("\n  H -- serialisation HDF5\n");
     testHDF5();
-    std::printf("\n  I -- domaine de l'oracle de Riemann (vide)\n");
+    std::printf("\n  I -- Riemann-oracle domain (vacuum)\n");
     testRiemannVacuumDomain();
     std::printf("\n  J -- symetrie de l'oracle (flux de masse signe)\n");
     testRiemannMirrorSymmetry();
     std::printf("\n  K -- convergence sur un MODE ACOUSTIQUE\n");
     testAcousticConvergence();
-    std::printf("\n  L -- les garde-fous n'ont pas agi\n");
+    std::printf("\n  L -- numerical guards remained inactive\n");
     testClampsNeverFire();
 
     std::printf("---------------------------------------------------------------------\n");
@@ -1481,7 +1481,7 @@ int main() {
     if (g_failures == 0)
         std::printf("  S3 VALIDE -- solveur SRHD de reference etabli.\n");
     else
-        std::printf("  %d ECHEC(S) -- S3 NON valide.\n", g_failures);
+        std::printf("  %d FAILURE(S) -- S3 is NOT validated.\n", g_failures);
     std::printf("=====================================================================\n");
     return g_failures == 0 ? 0 : 1;
 }
