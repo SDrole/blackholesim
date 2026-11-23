@@ -5,15 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Build Release par défaut (optimisations indispensables pour le rendu).
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-# --- Backend GPU (CUDA) ------------------------------------------------------
-# Activé automatiquement si un compilateur CUDA (nvcc) est disponible. Sur une
-# machine sans CUDA (ex. poste Windows sans toolkit), le rendu reste CPU pur.
-option(BHSIM_CUDA "Construire le moteur de rendu GPU (CUDA) si nvcc est présent" ON)
+option(BHSIM_CUDA "Build the CUDA renderer when nvcc is available" ON)
 include(CheckLanguage)
 set(BHSIM_USE_CUDA OFF)
 if(BHSIM_CUDA)
@@ -21,9 +17,9 @@ if(BHSIM_CUDA)
   if(CMAKE_CUDA_COMPILER)
     enable_language(CUDA)
     set(BHSIM_USE_CUDA ON)
-    message(STATUS "CUDA activé : ${CMAKE_CUDA_COMPILER}")
+    message(STATUS "CUDA enabled: ${CMAKE_CUDA_COMPILER}")
   else()
-    message(STATUS "CUDA demandé mais nvcc introuvable : rendu CPU uniquement.")
+    message(STATUS "CUDA requested but nvcc was not found: CPU renderer only.")
   endif()
 endif()
 
@@ -46,31 +42,20 @@ target_include_directories(blackholesim PRIVATE src)
 
 if(BHSIM_USE_CUDA)
   target_compile_definitions(blackholesim PRIVATE BHSIM_CUDA)
-  # A100 (PCIe ou SXM, même puce GA100) = Ampere = sm_80. (Adapter pour un autre GPU :
-  # RTX 3090->86, RTX 4090->89, H100->90.)
   set_target_properties(blackholesim PROPERTIES
     CUDA_ARCHITECTURES "80"
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON)
-  # Lambdas device tolérées ; PAS de -use_fast_math (le FP64 exact préserve Carter).
   target_compile_options(blackholesim PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 endif()
 
-# Avertissements + maths rapides : appliqués UNIQUEMENT au C++ (pas au device CUDA,
-# que l'on garde en arithmétique IEEE exacte). Le niveau d'optimisation (/O2, -O3)
-# vient du type de build (Release).
 if(MSVC)
   target_compile_options(blackholesim PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /fp:fast /EHsc /arch:AVX2>)
 else()
   target_compile_options(blackholesim PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -ffast-math -mavx2 -mfma>)
 endif()
 
-# --- Solveur GRMHD (exécutable SÉPARÉ du ray tracer) -------------------------
-# Architecture volontairement découplée :
-#   grmhd_tests / solveur  ->  snapshots  ->  blackholesim (ray tracer)
-# Le solveur ne connaît pas le moteur de rendu et réciproquement : chacun est
-# validable indépendamment. Cf. docs/ROADMAP_5_AXES.md (axe 5).
 add_executable(grmhd_tests
   grmhd/KerrSchild.cpp
   grmhd/tests_s1.cpp
@@ -78,15 +63,11 @@ add_executable(grmhd_tests
 target_include_directories(grmhd_tests PRIVATE grmhd)
 set_target_properties(grmhd_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 if(MSVC)
-  # PAS de /fp:fast ici : les tests de validation mesurent des écarts au
-  # niveau de la précision machine, les optimisations flottantes agressives
-  # fausseraient le verdict.
   target_compile_options(grmhd_tests PRIVATE /W4 /EHsc)
 else()
   target_compile_options(grmhd_tests PRIVATE -Wall -Wextra)
 endif()
 
-# S2 : primitives <-> conservées, hydrodynamique relativiste pure.
 add_executable(grmhd_s2_tests
   grmhd/Fluid.cpp
   grmhd/tests_s2.cpp
@@ -99,17 +80,6 @@ else()
   target_compile_options(grmhd_s2_tests PRIVATE -Wall -Wextra)
 endif()
 
-# --- Détection HDF5 PORTABLE -------------------------------------------------
-# Aucun chemin utilisateur en dur : le dépôt doit configurer sous Windows local
-# comme sur nos machines Linux/A100.
-#   1. find_package standard (couvre les installations système Linux, apt/yum,
-#      modules HPC, et Windows si HDF5_ROOT est fourni) ;
-#   2. à défaut, indices dérivés de l'ENVIRONNEMENT (CONDA_PREFIX, ou le
-#      répertoire du python trouvé sur le PATH) — jamais d'un nom d'utilisateur.
-#   3. override explicite toujours possible : -DHDF5_ROOT=/chemin
-# Si HDF5 reste introuvable, la cible se construit quand même, sans les tests
-# de sérialisation (BHSIM_HAVE_HDF5 non défini) : on ne bloque pas tout le
-# projet sur une dépendance optionnelle.
 find_package(HDF5 QUIET COMPONENTS C)
 
 if(NOT HDF5_FOUND)
@@ -133,18 +103,17 @@ if(NOT HDF5_FOUND)
     set(HDF5_FOUND TRUE)
     set(HDF5_INCLUDE_DIRS "${BHSIM_HDF5_INCLUDE_DIR}")
     set(HDF5_C_LIBRARIES  "${BHSIM_HDF5_LIBRARY}")
-    message(STATUS "HDF5 trouvé via l'environnement : ${BHSIM_HDF5_LIBRARY}")
+    message(STATUS "HDF5 found via environment: ${BHSIM_HDF5_LIBRARY}")
   endif()
 endif()
 
 if(HDF5_FOUND)
-  message(STATUS "HDF5 activé : tests de sérialisation S3 inclus.")
+  message(STATUS "HDF5 enabled: S3 serialization tests included.")
 else()
-  message(WARNING "HDF5 introuvable : les tests de sérialisation S3 seront ignorés. "
-                  "Passer -DHDF5_ROOT=<prefix> pour l'activer.")
+  message(WARNING "HDF5 not found: S3 serialization tests will be skipped. "
+                  "Pass -DHDF5_ROOT=<prefix> to enable them.")
 endif()
 
-# S3 : solveur SRHD 1D en espace plat + oracle de Riemann exact + HDF5.
 add_executable(grmhd_s3_tests
   grmhd/Fluid.cpp
   grmhd/Flux.cpp
@@ -159,9 +128,6 @@ if(HDF5_FOUND)
   target_include_directories(grmhd_s3_tests PRIVATE ${HDF5_INCLUDE_DIRS})
   target_link_libraries(grmhd_s3_tests PRIVATE ${HDF5_C_LIBRARIES})
   target_compile_definitions(grmhd_s3_tests PRIVATE BHSIM_HAVE_HDF5)
-  # Sur Windows, HDF5 packagé (conda) est une DLL : sans ce define, les
-  # variables globales (H5T_NATIVE_DOUBLE_g…) ne sont pas dllimport et le
-  # lien échoue. Inoffensif ailleurs.
   if(WIN32)
     target_compile_definitions(grmhd_s3_tests PRIVATE H5_BUILT_AS_DYNAMIC_LIB)
   endif()
@@ -173,10 +139,6 @@ else()
   target_compile_options(grmhd_s3_tests PRIVATE -Wall -Wextra)
 endif()
 
-# Consolidation S1 : vérification du schéma de dérivation (pas complexe) et
-# validation croisée contre le moteur Boyer-Lindquist du ray tracer, utilisé
-# comme ORACLE INDÉPENDANT (déjà validé en production par la conservation de
-# Carter). D'où le lien avec src/Metric.cpp et src/Geodesic.cpp.
 add_executable(grmhd_s1_consolidation
   grmhd/KerrSchild.cpp
   grmhd/tests_s1_consolidation.cpp
@@ -191,11 +153,10 @@ else()
   target_compile_options(grmhd_s1_consolidation PRIVATE -Wall -Wextra)
 endif()
 
-# Parallélisation du rendu CPU (OpenMP) — optionnelle.
 find_package(OpenMP QUIET)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(blackholesim PRIVATE OpenMP::OpenMP_CXX)
-  message(STATUS "OpenMP activé (rendu CPU multi-thread).")
+  message(STATUS "OpenMP enabled (multi-threaded CPU renderer).")
 else()
-  message(STATUS "OpenMP non trouvé : rendu CPU mono-thread.")
+  message(STATUS "OpenMP not found: single-threaded CPU renderer.")
 endif()
