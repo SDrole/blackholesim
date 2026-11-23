@@ -10,7 +10,7 @@ State geodesicRHS(const State& s, const Kerr& bh, const Constants& c) {
     const double E = c.E, Lz = c.Lz;
 
     const double r = s.r;
-    const double sinT = std::max(std::sin(s.theta), 1e-6);   // plancher : axe polaire
+    const double sinT = std::max(std::sin(s.theta), 1e-6);
     const double cosT = std::cos(s.theta);
     const double s2 = sinT * sinT;
 
@@ -20,12 +20,9 @@ State geodesicRHS(const State& s, const Kerr& bh, const Constants& c) {
 
     const double P = E * (r * r + a * a) - a * Lz;
 
-    // Super-hamiltonien (×2Σ) :  G = 2Σ H. Nul sur la couche nulle (H = 0) ;
-    // sa valeur résiduelle pilote un terme de rappel qui maintient H = 0.
     const double G = Delta * s.pr * s.pr + s.pth * s.pth - P * P / Dsafe
                    + a * a * E * E * s2 - 2.0 * a * E * Lz + Lz * Lz / s2;
 
-    // Dérivées partielles de G (à p, E, Lz fixés).
     const double dDelta = 2.0 * r - 2.0 * M;          // ∂Δ/∂r
     const double dP     = 2.0 * r * E;                // ∂P/∂r
     const double dG_dr  = dDelta * s.pr * s.pr
@@ -34,7 +31,6 @@ State geodesicRHS(const State& s, const Kerr& bh, const Constants& c) {
     const double dG_dth = 2.0 * a * a * E * E * sinT * cosT
                         - 2.0 * Lz * Lz * cosT / (sinT * s2);   // -2Lz²cosθ/sin³θ
 
-    // ∂Σ/∂r, ∂Σ/∂θ pour le terme de rappel (G/2Σ²)·∂Σ.
     const double dSig_dr  = 2.0 * r;
     const double dSig_dth = -2.0 * a * a * cosT * sinT;
     const double invSig   = 1.0 / Sigma;
