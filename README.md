@@ -6,6 +6,7 @@
 
 [![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=c%2B%2B&logoColor=white)](https://isocpp.org/)
 [![CMake](https://img.shields.io/badge/build-CMake-064F8C?logo=cmake&logoColor=white)](https://cmake.org/)
+[![CI](https://github.com/SDrole/blackholesim/actions/workflows/ci.yml/badge.svg)](https://github.com/SDrole/blackholesim/actions/workflows/ci.yml)
 [![CUDA](https://img.shields.io/badge/CUDA-optional-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
 [![OpenMP](https://img.shields.io/badge/CPU-OpenMP-1f6feb)](https://www.openmp.org/)
 ![Status](https://img.shields.io/badge/status-active%20research-orange)
