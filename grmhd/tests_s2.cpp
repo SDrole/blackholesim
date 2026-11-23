@@ -127,8 +127,8 @@ void testRoundTripByRegime() {
         {"moderement rel(W 1.01..2)       ", 1e-6, 1e6, 1e-8, 1e6, 1.01, 2.0},
         {"relativiste   (W 2..20)         ", 1e-6, 1e6, 1e-8, 1e6, 2.0, 20.0},
         {"ultrarel.     (W 20..1000)      ", 1e-6, 1e6, 1e-8, 1e6, 20.0, 1000.0},
-        {"froid         (u/rho ~ 1e-10)   ", 1e-3, 1e3, 1e-13, 1e-7, 1.0 + 1e-6, 50.0},
-        {"chaud         (u/rho >> 1)      ", 1e-3, 1e3, 1e3, 1e9, 1.0 + 1e-6, 50.0},
+        {"cold          (u/rho ~ 1e-10)   ", 1e-3, 1e3, 1e-13, 1e-7, 1.0 + 1e-6, 50.0},
+        {"hot           (u/rho >> 1)      ", 1e-3, 1e3, 1e3, 1e9, 1.0 + 1e-6, 50.0},
     };
     for (const Cfg& c : cfgs) {
         RegimeStats st; st.label = c.label;
@@ -136,9 +136,9 @@ void testRoundTripByRegime() {
         regimes.push_back(st);
     }
 
-    std::printf("       round-trip P->U->P par regime (20000 cas chacun) :\n");
+    std::printf("       P->U->P round trip by regime (20000 cases each) :\n");
     std::printf("         %-34s %-10s %-10s %-10s %-6s %-7s %s\n",
-                "regime", "err rho", "err u", "err v", "iters", "ech.algo", "cond.");
+                "regime", "err rho", "err u", "err v", "iters", "alg.fail", "cond.");
     double worstAll = 0.0;
     long long totalAlgo = 0, totalCond = 0;
     for (const RegimeStats& s : regimes) {
@@ -167,7 +167,7 @@ void testRoundTripByRegime() {
                totalAlgo == 0,
                totalAlgo == 0 ? "0 algorithmic failures" : "algorithmic failures present");
     std::printf("       -> %lld cas signales 'coldAtMachinePrecision' : succes NON FATAL\n"
-                "          (converged=true, failure=None, u=0 = meilleur etat\n"
+                "          (converged=true, failure=None, u=0 = best representable state\n"
                 "          representable). Comptabilises pour que S3 decide de sa\n"
                 "          politique de planchers en connaissance de cause.\n", totalCond);
 }
@@ -196,10 +196,10 @@ void testInternalEnergyConditioning() {
             if (ratio >= 1e-4 && W <= 10.0) worstWellConditioned = std::max(worstWellConditioned, e);
         }
     }
-    report("A3 err(u) dans le regime bien conditionne (u/rho>=1e-4, W<=10)",
+    report("A3 err(u) in well-conditioned regime (u/rho>=1e-4, W<=10)",
            worstWellConditioned, 1e-10);
-    std::printf("       -> DOMAINE MAL CONDITIONNE DOCUMENTE (non masque) : fluide tres\n"
-                "          froid (u/rho <~ 1e-8) a W eleve. Inherent a la formulation\n"
+    std::printf("       -> DOCUMENTED ILL-CONDITIONED DOMAIN (not hidden): very\n"
+                "          cold fluid (u/rho <~ 1e-8) at high W. Inherent to the\n"
                 "          conservative representation (u = difference of large terms), not an algorithmic bug.\n");
 }
 
@@ -265,7 +265,7 @@ void testClosedFormCases() {
             worstRest = std::max(worstRest, std::fabs(P.utilde[0]) + std::fabs(P.utilde[1]) + std::fabs(P.utilde[2]));
         }
     }
-    report("B2a fluide au repos : D=rho, tau=u (forme close)", worstRest, 1e-12);
+    report("B2a fluid at rest: D=rho, tau=u (closed form)", worstRest, 1e-12);
 
     double worstCold = 0.0;
     for (double rho : {1e-3, 1.0, 1e3}) {
@@ -282,7 +282,7 @@ void testClosedFormCases() {
             worstCold = std::max(worstCold, P.u / rho);
         }
     }
-    report("B2b fluide froid : inversion algebrique explicite", worstCold, 1e-9);
+    report("B2b cold fluid: explicit algebraic inversion", worstCold, 1e-9);
 }
 
 bool invertLongDouble(const ConservedState& U, long double gamma,
@@ -371,7 +371,7 @@ void testLongDoubleReference() {
     report("B3c W   vs reference long double", worstW,   1e-11);
     report("B3b u : ecart / borne de conditionnement predite", worstU, 50.0);
     std::printf("       -> rapport max observe/predit = %.2f  (borne 1/2*eps*(kappa+2W^2))\n"
-                "          %d cas a kappa > 1e10 (u sous le plancher numerique de la\n"
+                "          %d cases at kappa > 1e10 (u below the numerical floor of the\n"
                 "          representation conservative), ecart max sur u = %.2e\n",
                 worstU, illConditioned, worstUillCond);
 }
@@ -422,7 +422,7 @@ void testRejectionOfInvalidStates() {
         const bool ok = conservedToPrimitive(c.U, eos, P, st);
         const bool rejected = !ok;
         std::printf("         %-32s -> %s (%s)\n", c.label,
-                    rejected ? "REJETE" : "ACCEPTE (!!)", toString(st.failure));
+                    rejected ? "REJECTED" : "ACCEPTED (!!)", toString(st.failure));
         if (!rejected) allRejected = false;
     }
     reportBool("C2 tous les etats inadmissibles sont rejetes, non repares", allRejected);
@@ -455,11 +455,11 @@ void testNearAdmissibilityBoundary() {
             }
         }
     }
-    std::printf("       frontiere d'admissibilite : %lld cas, %lld converges, "
+    std::printf("       admissibility boundary: %lld cases, %lld converged, "
                 "%d iterations max, residu max %.2e\n", n, ok, maxIters, worstResidual);
     reportBool("C3a no unphysical state returned near the boundary",
                unphysical == 0);
-    reportBool("C3b convergence sur toute la frontiere testee", ok == n);
+    reportBool("C3b convergence across the entire tested boundary", ok == n);
 }
 
 //
@@ -513,7 +513,7 @@ void testColdIndistinguishability() {
                 "          U(u=delta) est BIT A BIT identique a U(u=0). La distinction\n"
                 "          est donc MATHEMATIQUEMENT IMPOSSIBLE apres conversion en\n"
                 "          double : this is not a limitation of the inversion algorithm. The\n"
-                "          recovery retourne u=0 (meilleur etat representable) et pose\n"
+                "          recovery retourne u=0 (best representable state representable) et pose\n"
                 "          coldAtMachinePrecision pour que S3 le sache.\n",
                 largestIndistinguishable);
 }
@@ -531,7 +531,7 @@ void testColdFlagSemantics() {
         if (!conservedToPrimitive(U, eos, P, st)) { okWarm = false; continue; }
         if (st.coldAtMachinePrecision) okWarm = false;
     }
-    reportBool("D2a fluide chaud : drapeau NON pose", okWarm);
+    reportBool("D2a hot fluid: flag NOT set", okWarm);
 
     bool okCold = true;
     for (double W : {1.5, 10.0, 100.0}) {
@@ -546,7 +546,7 @@ void testColdFlagSemantics() {
         if (st.failure != RecoveryFailure::None) okCold = false;
         if (!st.converged) okCold = false;
     }
-    reportBool("D2b fluide froid : succes + u negligeable + drapeau + failure=None", okCold);
+    reportBool("D2b cold fluid: success + negligible u + flag + failure=None", okCold);
 
     bool okSub = true; int flagged = 0;
     for (double W : {50.0, 200.0}) {
@@ -558,7 +558,7 @@ void testColdFlagSemantics() {
         if (st.failure != RecoveryFailure::None) okSub = false;
         if (st.coldAtMachinePrecision) ++flagged;
     }
-    reportBool("D2c etat sous le seuil : succes non fatal, signale", okSub && flagged > 0);
+    reportBool("D2c sub-threshold state: non-fatal success, reported", okSub && flagged > 0);
     std::printf("       -> the flag is a DIAGNOSTIC, not a failure: converged=true,\n"
                 "          failure=None. S3 pourra compter ces cellules et decider.\n");
 }
@@ -585,14 +585,14 @@ int main() {
     testRejectionOfInvalidStates();
     testNearAdmissibilityBoundary();
 
-    std::printf("\n  BLOC D -- diagnostic de conditionnement (froid a la precision machine)\n");
+    std::printf("\n  BLOCK D -- conditioning diagnostics (cold at machine precision)\n");
     testColdIndistinguishability();
     testColdFlagSemantics();
 
     std::printf("---------------------------------------------------------------------\n");
     std::printf("  %lld cas testes au total.\n", g_casesRun);
     if (g_failures == 0)
-        std::printf("  S2 VALIDE -- inversion hydro robuste, S3 peut demarrer.\n");
+        std::printf("  S2 VALIDATED -- robust hydro inversion; S3 may start.\n");
     else
         std::printf("  %d FAILURE(S) -- S2 is NOT validated; do not start S3.\n", g_failures);
     std::printf("=====================================================================\n");
