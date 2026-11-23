@@ -16,8 +16,8 @@ void hlleFlux(const RiemannInput& in, int dir, double F[5]) {
     physicalFlux(in.fL, in.uL, dir, FL);
     physicalFlux(in.fR, in.uR, dir, FR);
 
-    // Cas supersoniques : flux amont pur. Indispensable pour que
-    // F(U,U) == F_phys(U) EXACTEMENT (et pas seulement aux arrondis près).
+    // Supersonic cases: pure upwind flux. This is required for
+    // F(U,U) == F_phys(U) exactly, not merely within roundoff.
     if (aL >= 0.0) { for (int k = 0; k < 5; ++k) F[k] = FL[k]; return; }
     if (aR <= 0.0) { for (int k = 0; k < 5; ++k) F[k] = FR[k]; return; }
 
