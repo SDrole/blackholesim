@@ -7,16 +7,16 @@ namespace grmhd {
 
 const char* toString(RecoveryFailure f) {
     switch (f) {
-        case RecoveryFailure::None:               return "aucune";
-        case RecoveryFailure::NonFiniteInput:     return "entree non finie (NaN/Inf)";
+        case RecoveryFailure::None:               return "none";
+        case RecoveryFailure::NonFiniteInput:     return "non-finite input (NaN/Inf)";
         case RecoveryFailure::NonPositiveDensity: return "D <= 0";
-        case RecoveryFailure::EnergyBelowMomentum:return "E <= |S| (etat conserve inadmissible)";
-        case RecoveryFailure::BracketFailed:      return "encadrement de la racine impossible";
-        case RecoveryFailure::NoConvergence:      return "pas de convergence";
-        case RecoveryFailure::UnphysicalResult:   return "resultat hors domaine physique";
-        case RecoveryFailure::NegativeInternalEnergy: return "u < 0 (limite de conditionnement)";
+        case RecoveryFailure::EnergyBelowMomentum:return "E <= |S| (inadmissible conserved state)";
+        case RecoveryFailure::BracketFailed:      return "failed to bracket root";
+        case RecoveryFailure::NoConvergence:      return "no convergence";
+        case RecoveryFailure::UnphysicalResult:   return "result outside physical domain";
+        case RecoveryFailure::NegativeInternalEnergy: return "u < 0 (conditioning limit)";
     }
-    return "inconnue";
+    return "unknown";
 }
 
 double lorentzFactor(const PrimitiveState& P) {
