@@ -193,7 +193,7 @@ void testHorizonRegularity() {
         blDivergence = std::max(blDivergence, Sigma / std::max(std::fabs(Delta), 1e-300));
     }
     // On teste que KS reste borné (valeurs O(10), pas O(1e30)).
-    report("T6 KS regulier a l'horizon (composantes finies)", worstKS < 1e6 ? 0.0 : 1.0, 1e-15);
+    report("T6 KS regular at horizon (finite components)", worstKS < 1e6 ? 0.0 : 1.0, 1e-15);
     std::printf("       (contraste : en Boyer-Lindquist, g_rr ~ %.2e a r+)\n", blDivergence);
 }
 
@@ -397,7 +397,7 @@ void testGrid() {
     if (a == b || a == c2) worst = 1.0;
 
     report("S0 grille MKS (bornes, theta valide, indexation)", worst, 1e-15);
-    std::printf("       (r_interne = %.4f, r+ = %.4f  -> frontiere DANS l'horizon)\n", r0, rp);
+    std::printf("       (r_inner = %.4f, r+ = %.4f -> boundary INSIDE horizon)\n", r0, rp);
 }
 
 // =============================================================================
@@ -415,7 +415,7 @@ void reportBool(const char* name, bool ok, const char* detail = "") {
 // En S4 ce Gamma alimentera les termes source GRHD : Gamma = 0 produirait une
 // evolution parfaitement plausible et fausse, sans aucun symptome.
 void testChristoffelFailureContract() {
-    std::printf("\n  H1 -- contrat d'echec de christoffel()\n");
+    std::printf("\n  H1 -- christoffel() failure contract\n");
     KerrSchild ks(1.0, 0.9);
 
     // (a) Point valide : le resultat doit etre INCHANGE (non-regression).
@@ -458,18 +458,18 @@ void testChristoffelFailureContract() {
                 for (int i = 0; i < 4; ++i)
                     for (int j = 0; j < 4; ++j)
                         if (Gb[l][i][j] != 0.0) allZeroed = false;
-            std::printf("       (%s : ECHEC signale)\n", b.label);
+            std::printf("       (%s: failure reported)\n", b.label);
         }
     }
-    reportBool("H1c aucune entree invalide ne renvoie du bruit fini", allDetected);
-    reportBool("H1d Gamma remis a zero quand l'echec est signale", allZeroed);
+    reportBool("H1c invalid inputs never return plausible finite noise", allDetected);
+    reportBool("H1d Gamma is zero-filled when failure is reported", allZeroed);
 
     // (c) DISCRIMINANCE : avec l'ancien contrat (void), il etait IMPOSSIBLE
     // d'ecrire H1c/H1d. Ce test-ci verifie que le canal d'echec existe vraiment,
     // c'est-a-dire qu'au moins une entree du domaine le declenche.
     double Gs[4][4][4];
     const bool sing = ks.christoffel(0.0, kPi / 2.0, Gs);
-    reportBool("H1e le chemin d'echec est REELLEMENT atteignable", !sing);
+    reportBool("H1e failure path is genuinely reachable", !sing);
 }
 
 // --- H2 : domaine de validite des parametres de Kerr -------------------------
@@ -533,7 +533,7 @@ void testKerrParameterDomain() {
     reportBool("H2c M<=0 ou |a|>M rejetes explicitement", allRejected);
     // DISCRIMINANT : avec l'ancien clamp `d > 0 ? d : 0`, a=1.5 renvoyait
     // silencieusement r+ = M = 1 -- un horizon qui n'existe pas.
-    reportBool("H2d hors domaine -> NaN, pas un horizon plausible", allNaN);
+    reportBool("H2d out-of-domain parameters -> NaN, not a plausible horizon", allNaN);
 }
 
 }  // namespace
@@ -559,7 +559,7 @@ int main() {
     if (g_failures == 0) {
         std::printf("  TOUS LES TESTS PASSENT -- S0/S1 valides, S2 peut demarrer.\n");
     } else {
-        std::printf("  %d TEST(S) EN ECHEC -- ne pas passer a S2.\n", g_failures);
+        std::printf("  %d FAILED TEST(S) -- do not proceed to S2.\n", g_failures);
     }
     std::printf("=====================================================================\n");
     return g_failures == 0 ? 0 : 1;
