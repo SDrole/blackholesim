@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Linux / GCC / scientific tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libhdf5-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBHSIM_CUDA=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: S1 geometry
+        run: ./build/grmhd_tests
+
+      - name: S1 consolidation
+        run: ./build/grmhd_s1_consolidation
+
+      - name: S2 primitive recovery
+        run: ./build/grmhd_s2_tests
+
+      - name: S3 SRHD
+        run: ./build/grmhd_s3_tests
