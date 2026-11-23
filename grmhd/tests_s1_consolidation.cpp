@@ -124,8 +124,8 @@ void testDerivativesVsComplexStep() {
         }
     }
     // Différences centrées O(h²) avec h~1e-6 => ~1e-12 attendu, plus l'arrondi.
-    report("A1a d_r g : differences finies vs pas complexe", worstR, 1e-8);
-    report("A1b d_th g : differences finies vs pas complexe", worstT, 1e-8);
+    report("A1a d_r g: finite differences vs complex step", worstR, 1e-8);
+    report("A1b d_theta g: finite differences vs complex step", worstT, 1e-8);
 }
 
 // A2 — sensibilité des Γ au pas h : balayage sur plusieurs décades.
@@ -138,7 +138,7 @@ void testStepSensitivity() {
     double refR[4][4], refT[4][4];
     metricDerivComplexStep(r, th, 1.0, a, refR, refT);
 
-    std::printf("       balayage du pas h (derivee d_r g, spin 0.9, r=4, th=1) :\n");
+    std::printf("       h-step sweep (d_r g derivative, spin 0.9, r=4, theta=1) :\n");
     double bestErr = 1e30; double bestH = 0.0;
     double errAtProduction = 0.0;
     for (double h = 1e-2; h > 1e-12; h *= 0.1) {
@@ -211,7 +211,7 @@ void testAxisProximity() {
             for (int j = 0; j < 4; ++j)
                 worstParity = std::max(worstParity, std::fabs(gp[i][j] - gm[i][j]) / scale);
     }
-    report("A3a g(-theta) == g(theta) : pas de reflexion a l'axe", worstParity, 1e-15);
+    report("A3a g(-theta) == g(theta): no spurious axis reflection", worstParity, 1e-15);
 
     // --- A3b : les trois métriques d'erreur, cote à cote --------------------
     std::printf("       d_th g pres de l'axe -- trois normalisations :\n");
@@ -243,14 +243,14 @@ void testAxisProximity() {
     // VERDICT attendu si l'objection est correcte : |err| abs et rel/max|g|
     // restent ~plats sur 6 décades, tandis que rel/|d_th g| explose parce que
     // son dénominateur tend vers 0.
-    report("A3b erreur ABSOLUE de d_th g bornee jusqu'a l'axe", worstAbs, 1e-7);
-    report("A3c erreur relative a max|g| (echelle non evanescente)", worstVsG, 1e-9);
+    report("A3b absolute d_theta g error remains bounded to the axis", worstAbs, 1e-7);
+    report("A3c error relative to max|g| (non-vanishing scale)", worstVsG, 1e-9);
 
     // --- A3d : ce qui compte vraiment pour le solveur, les Christoffels -----
     // Γ ~ g⁻¹ ∂g, or g^{φφ} ~ 1/(Σ sin²θ) diverge sur l'axe : c'est LÀ que se
     // poserait un vrai problème de conditionnement, pas dans ∂g. On compare
     // les Γ issus des différences finies à ceux issus du pas complexe (exact).
-    std::printf("       erreur relative sur les Christoffels pres de l'axe :\n");
+    std::printf("       relative Christoffel error near the axis :\n");
     double worstGamma = 0.0;
     for (double th : {1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.5}) {
         Metric4 m;
@@ -287,7 +287,7 @@ void testAxisProximity() {
                     th, rel, scale);
         worstGamma = std::max(worstGamma, rel);
     }
-    report("A3d Christoffels : erreur relative bornee jusqu'a 1e-5 rad", worstGamma, 1e-8);
+    report("A3d Christoffels: relative error bounded down to 1e-5 rad", worstGamma, 1e-8);
 }
 
 // =============================================================================
@@ -469,7 +469,7 @@ void testCrossValidationKSvsBL() {
         {0.5,  20.0, 1.10,      -0.35,  0.03,  0.008, "a=0.5  incline"},
         {0.9,  15.0, kPi / 2.0, -0.30,  0.00,  0.012, "a=0.9  equatorial"},
         {0.9,  12.0, 0.90,      -0.40,  0.04,  0.006, "a=0.9  incline"},
-        {0.998, 8.0, kPi / 2.0, -0.25,  0.00,  0.015, "a=0.998 proche horizon"},
+        {0.998, 8.0, kPi / 2.0, -0.25,  0.00,  0.015, "a=0.998 near horizon"},
     };
 
     std::printf("       comparaison KS (Christoffels) vs BL (hamiltonien bhsim) :\n");
@@ -500,7 +500,7 @@ void testCrossValidationKSvsBL() {
 
     report("B1a accord KS vs BL sur (r, theta) a lambda=20", worstDiff, 1e-6);
     report("B1b invariants KS (E, Lz, nullite) le long du trajet", worstKSinv, 1e-8);
-    report("B1c Carter conservee cote BL (sanite de l'oracle)", worstCarter, 1e-8);
+    report("B1c Carter conserved on BL side (oracle sanity check)", worstCarter, 1e-8);
 }
 
 // B2 — CONVERGENCE : c'est le test décisif. En divisant le pas par 2, l'écart
@@ -558,7 +558,7 @@ void testConvergenceOrder() {
            (bestOrder >= 3.0) ? 0.0 : 1.0, 1e-15);
     std::printf("       (ordre max observe hors plancher : %.2f ; le plateau final a\n"
                 "        ~1e-12 vient du plancher de differentiation des Christoffels,\n"
-                "        c'est attendu et non un echec)\n", bestOrder);
+                "        this is expected and not a failure)\n", bestOrder);
 }
 
 }  // namespace
@@ -580,7 +580,7 @@ int main() {
     if (g_failures == 0)
         std::printf("  CONSOLIDATION S1 VALIDEE -- la geometrie est verrouillee, S2 peut demarrer.\n");
     else
-        std::printf("  %d ECHEC(S) -- geometrie NON verrouillee, ne pas demarrer S2.\n", g_failures);
+        std::printf("  %d FAILURE(S) -- geometry is not locked; do not start S2.\n", g_failures);
     std::printf("=====================================================================\n");
     return g_failures == 0 ? 0 : 1;
 }
