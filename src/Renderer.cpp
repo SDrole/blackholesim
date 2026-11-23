@@ -481,7 +481,7 @@ RenderResult Renderer::render() const {
 
         const int stepRows = std::max(1, H / 20);
         if (done % stepRows == 0 || done == H) {
-            std::fprintf(stderr, "\r  rendu : %3d %%", static_cast<int>(100.0 * done / H));
+            std::fprintf(stderr, "\r  render: %3d %%", static_cast<int>(100.0 * done / H));
             std::fflush(stderr);
         }
     }
