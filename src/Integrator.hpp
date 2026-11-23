@@ -3,11 +3,6 @@
 
 namespace bhsim {
 
-// -----------------------------------------------------------------------------
-// Intégrateurs d'EDO génériques pour l'état géodésique.
-// Les "pas" sont templatés sur le membre de droite f (foncteur/lambda) afin
-// d'être inlinés dans la boucle de rendu. Le contrôleur de pas est dans le .cpp.
-// -----------------------------------------------------------------------------
 
 struct StepControl {
     double hMin = 1e-6;
@@ -15,8 +10,6 @@ struct StepControl {
     double safety = 0.9;
 };
 
-// À partir de la norme d'erreur pondérée (cible = 1), renvoie le facteur
-// d'échelle du pas (borné) et indique via 'accept' si le pas est validé.
 double proposeStepFactor(double errorNorm, bool& accept, const StepControl& ctl);
 
 // --- Runge-Kutta 4 classique (pas fixe) -------------------------------------
@@ -31,8 +24,8 @@ State rk4Step(const State& y, double h, Deriv&& f) {
 
 // --- Runge-Kutta-Fehlberg 4(5) (pas adaptatif) ------------------------------
 struct RKF45Result {
-    State y;     // solution avancée (5e ordre, extrapolation locale)
-    State err;   // estimation d'erreur locale (y5 - y4), par composante
+    State y;
+    State err;
 };
 
 template <typename Deriv>
