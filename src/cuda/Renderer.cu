@@ -93,7 +93,7 @@ __device__ __forceinline__ double dev_diskRedshift(double r, double Lz, double a
     return (1.0 - omegaObs * Lz) / denom;
 }
 
-// Coefficient logarithmique du flux de Page-Thorne (racine xi, autres xj, xk).
+// Logarithmic Page-Thorne flux coefficient (root xi, other roots xj/xk).
 __device__ __forceinline__ double dev_ptCoeff(double xi, double xj, double xk, double as) {
     if (fabs(xi) < 1e-9) return 0.0;
     return 3.0 * (xi - as) * (xi - as) / (xi * (xi - xj) * (xi - xk));
@@ -556,7 +556,7 @@ __device__ GSample dev_traceRay(const GPhoton& ph, const float3* lut, const floa
                             dz = (float)(c1.z - c0.z);
                 const float ds = __fsqrt_rn(dx * dx + dy * dy + dz * dz);
 
-                // Thermodynamique + redshift relativiste complet : T_obs = g·T_local.
+                // Thermodynamics + full relativistic redshift: T_obs = g*T_local.
                 const float Tloc = dev_ntTemperature((float)rm, p);
                 float g = (float)dev_diskRedshift(rm, Lz, p.obsLapse, p.obsOmega, p);
                 g = dev_clampf(g, 0.02f, 8.0f);
@@ -775,7 +775,7 @@ RenderResult Renderer::renderGPU() const {
     CUDA_CHECK(cudaMalloc(&d_hit,    N * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_carter, N * sizeof(double)));
 
-    // --- Lancement par bandes horizontales (retour de progression) ---------------
+    // --- Launch in horizontal bands to report progress ----------------------------
     const dim3 block(16, 16);
     const int bandRows = 64;
     for (int jStart = 0; jStart < H; jStart += bandRows) {
@@ -785,7 +785,7 @@ RenderResult Renderer::renderGPU() const {
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaDeviceSynchronize());
         const int done = jEnd;
-        std::fprintf(stderr, "\r  rendu GPU : %3d %%", (int)(100.0 * done / H));
+        std::fprintf(stderr, "\r  GPU render: %3d %%", (int)(100.0 * done / H));
         std::fflush(stderr);
     }
     std::fprintf(stderr, "\n");
