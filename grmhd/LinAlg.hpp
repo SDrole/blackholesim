@@ -4,13 +4,13 @@
 namespace grmhd {
 
 // -----------------------------------------------------------------------------
-// Algèbre linéaire 4x4 minimale pour la relativité générale.
-// Volontairement autonome (pas de dépendance externe) : ces routines sont
-// appelées en boucle serrée et doivent rester inspectables/testables.
+// Minimal 4x4 linear algebra for general relativity.
+// Deliberately self-contained: these routines run in tight loops and should
+// remain easy to inspect and test.
 // -----------------------------------------------------------------------------
 
-// Inversion 4x4 par Gauss-Jordan avec pivot partiel.
-// Renvoie false si la matrice est singulière (pivot sous seuil).
+// Gauss-Jordan 4x4 inversion with partial pivoting.
+// Returns false for a singular matrix (pivot below threshold).
 inline bool invert4x4(const double m[4][4], double out[4][4]) {
     double a[4][8];
     for (int i = 0; i < 4; ++i) {
@@ -21,8 +21,8 @@ inline bool invert4x4(const double m[4][4], double out[4][4]) {
     }
 
     for (int col = 0; col < 4; ++col) {
-        // Pivot partiel : indispensable ici, la métrique de Kerr-Schild a des
-        // composantes d'ordres de grandeur très différents près de l'horizon.
+        // Partial pivoting is important because Kerr-Schild metric components
+        // can differ substantially in magnitude near the horizon.
         int piv = col;
         double best = std::fabs(a[col][col]);
         for (int i = col + 1; i < 4; ++i) {
@@ -53,7 +53,7 @@ inline bool invert4x4(const double m[4][4], double out[4][4]) {
     return true;
 }
 
-// Déterminant 4x4 par expansion en cofacteurs 2x2 (stable et sans allocation).
+// 4x4 determinant via 2x2 cofactor expansion; allocation-free.
 inline double det4x4(const double m[4][4]) {
     const double s0 = m[0][0]*m[1][1] - m[1][0]*m[0][1];
     const double s1 = m[0][0]*m[1][2] - m[1][0]*m[0][2];
