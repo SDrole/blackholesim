@@ -57,9 +57,6 @@ double Kerr::orbitalUt(double r) const {
 }
 
 double Kerr::diskRedshift(double r, double Lz, double alphaObs, double omegaObs) const {
-    // g = ν_obs/ν_em = E_loc(ZAMO caméra) / E_em(orbite).  Photon E = 1.
-    //   E_em  = u^t (1 - Ω Lz)              (émetteur : orbite circulaire prograde)
-    //   E_loc = (1 - ω_obs Lz) / α_obs      (récepteur : ZAMO à la caméra)
     const double ut = orbitalUt(r);
     const double denom = alphaObs * ut * (1.0 - orbitalOmega(r) * Lz);
     if (denom <= 1e-6) return 0.0;     // garde-fou (faisceau quasi tangent)
@@ -81,7 +78,6 @@ double Kerr::pageThorneFlux(double r) const {
     const double x2 =  2.0 * std::cos(t + third);
     const double x3 = -2.0 * std::cos(t);
 
-    // Coefficients (le terme dégénère pour a -> 0 si une racine -> 0 : on l'annule).
     auto coeff = [&](double xi, double xj, double xk) {
         if (std::fabs(xi) < 1e-9) return 0.0;
         return 3.0 * (xi - as) * (xi - as) / (xi * (xi - xj) * (xi - xk));
