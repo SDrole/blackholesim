@@ -1,6 +1,30 @@
+# Build and generated output
 build/
+cmake-build-*/
 output/
-.claude/
 *.log
-grmhd_s3_snapshot.h5
 *.h5
+grmhd_s3_snapshot.h5
+
+# Local tool / IDE state
+.claude/
+.vscode/
+.idea/
+CMakeUserPresets.json
+__pycache__/
+*.py[cod]
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# OS metadata
+.DS_Store
+Thumbs.db
