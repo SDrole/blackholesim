@@ -4,7 +4,7 @@
 
 **A physics-first Kerr black hole renderer and an evolving GRHD/GRMHD research codebase**
 
-[![C++](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=c%2B%2B&logoColor=white)](https://isocpp.org/)
+[![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=c%2B%2B&logoColor=white)](https://isocpp.org/)
 [![CMake](https://img.shields.io/badge/build-CMake-064F8C?logo=cmake&logoColor=white)](https://cmake.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-optional-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
 [![OpenMP](https://img.shields.io/badge/CPU-OpenMP-1f6feb)](https://www.openmp.org/)
@@ -174,7 +174,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the full validation plan.
 
 ### Requirements
 
-- C++20-capable compiler
+- C++17-capable compiler
 - CMake
 - Ninja (recommended)
 - OpenMP
