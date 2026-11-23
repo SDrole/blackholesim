@@ -4,18 +4,17 @@
 namespace grmhd {
 
 // -----------------------------------------------------------------------------
-// Équation d'état — ISOLÉE derrière une interface minimale.
+// Equation of state — isolated behind a minimal interface.
 //
-// Motif : ne pas disperser Γ et les relations thermodynamiques dans le
-// solveur. Tout ce qui suppose « gaz parfait » doit passer par ici, pour
-// qu'un changement d'EOS (Mignone & McKinney / Synge, en S5+ si le besoin
-// apparaît) reste local.
+// Motivation: keep Gamma and thermodynamic relations out of the solver core.
+// Anything that assumes an ideal gas goes through this class so a future EOS
+// change (e.g. Mignone & McKinney / Synge) remains local.
 //
-// Convention HARM : la variable thermodynamique primitive est la DENSITÉ
-// D'ÉNERGIE INTERNE `u` (et non la pression). ε = u/ρ est l'énergie interne
-// spécifique, h = 1 + ε + p/ρ l'enthalpie spécifique.
+// HARM convention: the primitive thermodynamic variable is INTERNAL-ENERGY
+// DENSITY u, not pressure. epsilon = u/rho is the specific internal energy and
+// h = 1 + epsilon + p/rho is the specific enthalpy.
 //
-// Γ-law : p = (Γ-1) u.
+// Gamma-law: p = (Gamma - 1) u.
 // -----------------------------------------------------------------------------
 class IdealGasEOS {
 public:
@@ -23,20 +22,19 @@ public:
 
     double gamma() const { return gamma_; }
 
-    // p(ρ, u) = (Γ-1) u   — indépendante de ρ pour une Γ-law.
+    // p(rho,u) = (Gamma-1)u — independent of rho for a Gamma-law EOS.
     double pressure(double /*rho*/, double u) const { return (gamma_ - 1.0) * u; }
 
-    // u(ρ, p) : inverse de la précédente.
+    // u(rho,p): inverse of pressure().
     double internalEnergy(double /*rho*/, double p) const { return p / (gamma_ - 1.0); }
 
-    // Enthalpie spécifique h = 1 + ε + p/ρ = 1 + Γ u / ρ  (pour une Γ-law).
+    // Specific enthalpy h = 1 + epsilon + p/rho = 1 + Gamma u/rho.
     double specificEnthalpy(double rho, double u) const {
         return 1.0 + gamma_ * u / rho;
     }
 
-    // Vitesse du son au carré, forme relativiste : c_s² = Γ p / (ρ h).
-    // Non utilisée en S2 (pas de flux), mais définie ici pour que S3 la
-    // trouve au bon endroit plutôt que de la réinventer dans le solveur.
+    // Relativistic sound speed squared: cs^2 = Gamma p/(rho h).
+    // Not needed in S2, but defined here so S3 does not duplicate EOS logic.
     double soundSpeed2(double rho, double u) const {
         const double p = pressure(rho, u);
         const double h = specificEnthalpy(rho, u);
