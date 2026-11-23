@@ -208,11 +208,11 @@ bool branchVelocity(const RiemannState& pre, double p, double g, int sign,
 
 const char* toString(RiemannFailure f) {
     switch (f) {
-        case RiemannFailure::None:         return "aucun";
-        case RiemannFailure::InvalidInput: return "entree invalide (rho<=0, p<0, |v|>=1 ou non finie)";
-        case RiemannFailure::VacuumFormed: return "formation de VIDE (hors domaine de l'oracle)";
-        case RiemannFailure::NoBracket:    return "impossible d'encadrer la racine";
-        case RiemannFailure::NotConverged: return "non convergee a la tolerance";
+        case RiemannFailure::None:         return "none";
+        case RiemannFailure::InvalidInput: return "invalid input (rho<=0, p<0, |v|>=1 or non-finite)";
+        case RiemannFailure::VacuumFormed: return "vacuum formation (outside oracle domain)";
+        case RiemannFailure::NoBracket:    return "failed to bracket root";
+        case RiemannFailure::NotConverged: return "did not converge to tolerance";
     }
     return "?";
 }
