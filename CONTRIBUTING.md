@@ -40,7 +40,7 @@ Do not silently repair an invalid state.
 
 ## Code conventions
 
-- C++20 where applicable.
+- C++17 for the current codebase.
 - Prefer clear numerical contracts over clever abstractions.
 - Keep CPU/CUDA behavior aligned when a feature exists in both paths.
 - State coordinate, metric and unit conventions explicitly.

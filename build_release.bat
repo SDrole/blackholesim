@@ -1,9 +1,37 @@
 @echo off
-set "PATH=C:\Program Files (x86)\Microsoft Visual Studio\Installer;%PATH%"
-call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-set "PATH=C:\Program Files\CMake\bin;C:\Users\becis\AppData\Local\Microsoft\WinGet\Packages\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe;%PATH%"
-echo AFTER-VCVARS-PATH=%PATH%
-where cl
+setlocal
+
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+  echo ERROR: Visual Studio Installer / vswhere.exe was not found.
+  exit /b 1
+)
+
+for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+  set "VSINSTALL=%%I"
+)
+
+if not defined VSINSTALL (
+  echo ERROR: Visual Studio C++ Build Tools were not found.
+  exit /b 1
+)
+
+call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat"
+if errorlevel 1 exit /b 1
+
+where cmake >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: cmake was not found on PATH.
+  exit /b 1
+)
+
+where ninja >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: ninja was not found on PATH.
+  exit /b 1
+)
+
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 if errorlevel 1 exit /b 1
+
 cmake --build build
