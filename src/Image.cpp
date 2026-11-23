@@ -8,19 +8,11 @@ namespace bhsim {
 
 namespace {
 
-// Encodage final d'un canal display-référencé ∈ [0,1] : correction gamma 2.2
-// (espace linéaire de calcul -> espace sRGB de l'écran) puis quantification 8 bits.
 uint8_t encode(double c) {
     c = std::clamp(c, 0.0, 1.0);
     return static_cast<uint8_t>(std::lround(std::pow(c, 1.0 / 2.2) * 255.0));
 }
 
-// Tone-mapping ACES filmic *complet* (fit de Stephen Hill / Narkowicz 2016) :
-// l'image HDR sRGB-linéaire est transformée dans l'espace ACEScg via la matrice
-// d'entrée RRT, passée dans la courbe RRT∘ODT, puis ramenée en sRGB par la matrice
-// de sortie ODT. Contrairement à l'approximation mono-canal, ce pipeline matriciel
-// préserve la teinte des très hautes lumières : le côté gauche (beaming Doppler
-// intense) révèle la texture du plasma au lieu de saturer en un bloc blanc « brûlé ».
 struct RGB { double r, g, b; };
 
 RGB matMul(const double m[3][3], const RGB& v) {
@@ -53,8 +45,6 @@ RGB acesFitted(RGB c) {
     return c;
 }
 
-// Flou gaussien séparable (2 passes 1D, bords par répétition du pixel de bord),
-// noyau tronqué à ±3σ. Utilisé comme fonction d'étalement de point (PSF).
 void gaussianBlur(std::vector<double>& data, int w, int h, double sigma) {
     const int radius = std::max(1, static_cast<int>(std::ceil(sigma * 3.0)));
     std::vector<double> kernel(2 * radius + 1);
@@ -143,7 +133,6 @@ void Image::resolve(int i, int j, uint8_t& r, uint8_t& g, uint8_t& b) const {
     const size_t idx = (static_cast<size_t>(j) * width_ + i) * 3;
     const double lr = data_[idx + 0], lg = data_[idx + 1], lb = data_[idx + 2];
 
-    // HDR linéaire -> ACES filmic complet (matriciel) -> gamma 2.2 -> 8 bits sRGB.
     const RGB tm = acesFitted({ lr, lg, lb });
     r = encode(tm.r);
     g = encode(tm.g);
@@ -169,7 +158,7 @@ bool Image::writeBMP(const std::string& path) const {
     std::ofstream os(path, std::ios::binary);
     if (!os) return false;
 
-    const int rowSize  = (width_ * 3 + 3) & ~3;          // lignes alignées sur 4 octets
+    const int rowSize  = (width_ * 3 + 3) & ~3;
     const uint32_t dataSize = static_cast<uint32_t>(rowSize) * height_;
     const uint32_t fileSize = 54 + dataSize;
 
@@ -177,14 +166,14 @@ bool Image::writeBMP(const std::string& path) const {
     os.put('B'); os.put('M');
     putLE32(os, fileSize);
     putLE32(os, 0);
-    putLE32(os, 54);                                     // offset des données
+    putLE32(os, 54);
     // BITMAPINFOHEADER (40 octets)
     putLE32(os, 40);
     putLE32(os, static_cast<uint32_t>(width_));
     putLE32(os, static_cast<uint32_t>(height_));         // positif = lignes bas->haut
     putLE16(os, 1);                                      // plans
     putLE16(os, 24);                                     // bits par pixel
-    putLE32(os, 0);                                      // compression : aucune
+    putLE32(os, 0);
     putLE32(os, dataSize);
     putLE32(os, 2835); putLE32(os, 2835);               // ~72 DPI
     putLE32(os, 0); putLE32(os, 0);
