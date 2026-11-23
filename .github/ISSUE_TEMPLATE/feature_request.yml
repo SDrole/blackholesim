@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a renderer, physics, numerical, tooling, or documentation improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What capability or limitation does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Describe the implementation or scientific method.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: How should the result be tested independently?
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Papers, benchmark codes, standards, or related implementations.
