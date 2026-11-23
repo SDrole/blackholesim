@@ -14,7 +14,6 @@ double minmod(double a, double b) {
     if (a * b <= 0.0) return 0.0;
     return (std::fabs(a) < std::fabs(b)) ? a : b;
 }
-// MC (monotonized central) : moins diffusif que minmod, toujours TVD.
 double mcLimiter(double a, double b) {
     if (a * b <= 0.0) return 0.0;
     const double c = 0.5 * (a + b);
@@ -69,24 +68,15 @@ double Solver1D::computeTimeStep() const {
         maxSpeed = std::max(maxSpeed, std::max(std::fabs(s.lambdaMinus),
                                                 std::fabs(s.lambdaPlus)));
     }
-    // Plancher : évite dt infini pour un état strictement au repos et froid.
     maxSpeed = std::max(maxSpeed, 1e-10);
     return cfg_.cfl * dx_ / maxSpeed;
 }
 
-// POINT UNIQUE d'application de la politique de recovery.
-// Toute conversion U→P du solveur passe par ici : il ne doit pas exister deux
-// implémentations du contrat susceptibles de diverger (c'est précisément ce
-// qui s'était produit — computeRHS repartait d'une primitive périmée même
-// sous la politique Abort, contournant le contrat annoncé).
 bool Solver1D::recoverWithPolicy(int cell, const ConservedState& U, const PrimitiveState& fallback,
                                  PrimitiveState& out, RecoveryStatus& st,
                                  bool& usedFallback) {
     usedFallback = false;
 
-    // Injection de faute (tests uniquement). Placée ICI et nulle part ailleurs :
-    // une faute injectée doit emprunter exactement le même chemin de politique
-    // qu'un échec réel, sinon le test validerait un chemin qui n'existe pas.
     const bool forced = (faultStage_ != 0 && faultStage_ == curStage_ && faultCell_ == cell);
 
     const bool ok = forced ? false : conservedToPrimitive(U, eos_, out, st);
@@ -97,7 +87,6 @@ bool Solver1D::recoverWithPolicy(int cell, const ConservedState& U, const Primit
     ++counters_.recoveryFailures;
     if (cfg_.recoveryPolicy == RecoveryFailurePolicy::Abort) return false;
 
-    // FallbackToPrevious UNIQUEMENT : réparation non conservative, assumée.
     out = fallback;
     usedFallback = true;
     return true;
@@ -107,10 +96,6 @@ bool Solver1D::computeRHS(const std::vector<ConservedState>& cons,
                           std::vector<std::array<double, 5>>& rhs, StepResult& res) {
     const int nTot = total();
 
-    // 1) Primitives locales (les conservées font foi).
-    // On convertit TOUT avant de calculer le moindre flux : sous Abort, un
-    // échec interrompt ici, donc aucun flux ne peut être bâti sur un état
-    // non récupéré.
     static thread_local std::vector<PrimitiveState> P;
     static thread_local std::vector<FluidVars> FV;
     P.resize(nTot); FV.resize(nTot);
@@ -128,15 +113,10 @@ bool Solver1D::computeRHS(const std::vector<ConservedState>& cons,
         FV[i] = makeFluidVars(P[i], eos_);
     }
 
-    // 2) Reconstruction aux faces + flux de Riemann.
-    // UNE SEULE évaluation par face, partagée par les deux cellules adjacentes :
-    // c'est ce qui rend le schéma conservatif au niveau de l'arrondi.
     static thread_local std::vector<std::array<double, 5>> faceFlux;
     faceFlux.resize(nTot + 1);
 
     auto reconstructPair = [&](int i, PrimitiveState& left, PrimitiveState& right) {
-        // Face entre i et i+1 : état gauche = extrapolation depuis i,
-        // état droit = extrapolation depuis i+1.
         if (cfg_.recon == Reconstruction::PiecewiseConstant) {
             left = P[i]; right = P[i + 1];
             return;
@@ -145,15 +125,12 @@ bool Solver1D::computeRHS(const std::vector<ConservedState>& cons,
         auto slope = [&](int j, double PrimitiveState::* /*unused*/) { (void)j; return 0.0; };
         (void)slope;
 
-        // Pente limitée composante par composante, sur les PRIMITIVES
-        // (reconstruire les primitives évite de produire des états conservés
-        // inadmissibles, contrairement à une reconstruction des conservées).
         auto doSlope = [&](double a, double b) { return lim(a, b); };
 
         auto recon1 = [&](int j, double vm, double v0, double vp, double& lo, double& hi) {
             const double s = doSlope(v0 - vm, vp - v0);
-            lo = v0 + 0.5 * s;    // extrapolation vers la face droite de j
-            hi = v0 - 0.5 * s;    // extrapolation vers la face gauche de j
+            lo = v0 + 0.5 * s;
+            hi = v0 - 0.5 * s;
             (void)j;
         };
 
@@ -171,11 +148,6 @@ bool Solver1D::computeRHS(const std::vector<ConservedState>& cons,
             right.utilde[k] = hi;
         }
 
-        // Garde-fou de positivité de la RECONSTRUCTION (distinct des floors
-        // physiques) : si l'extrapolation produit ρ ou u négatif, on retombe
-        // localement au premier ordre. C'est la pratique standard et cela
-        // reste une décision de la brique « reconstruction », pas un floor
-        // dissimulé sur l'état physique.
         if (left.rho  <= 0.0 || left.u  < 0.0) { left  = P[i];     ++counters_.reconstructionFallbacks; }
         if (right.rho <= 0.0 || right.u < 0.0) { right = P[i + 1]; ++counters_.reconstructionFallbacks; }
     };
@@ -192,11 +164,9 @@ bool Solver1D::computeRHS(const std::vector<ConservedState>& cons,
         in.fR = makeFluidVars(pr, eos_);
         in.uL = primitiveToConserved(pl, eos_);
         in.uR = primitiveToConserved(pr, eos_);
-        hlleFlux(in, 0, faceFlux[i + 1].data());   // flux de la face entre i et i+1
+        hlleFlux(in, 0, faceFlux[i + 1].data());
     }
 
-    // 3) Divergence : chaque cellule utilise EXACTEMENT le même tableau de
-    // flux que sa voisine -> télescopage exact des sommes globales.
     rhs.assign(nTot, {0.0, 0.0, 0.0, 0.0, 0.0});
     const double invdx = 1.0 / dx_;
     for (int i = NG; i < NG + cfg_.nx; ++i)
@@ -209,9 +179,6 @@ bool Solver1D::recoverPrimitives(std::vector<ConservedState>& cons, StepResult& 
     for (int i = NG; i < NG + cfg_.nx; ++i) {
         RecoveryStatus st;
         PrimitiveState p;
-        // `modified` trace si la primitive a été RÉELLEMENT changée par une
-        // politique explicite. C'est la seule condition qui autorise à
-        // réécrire U (contrat de conservation).
         bool modified = false;
         bool usedFallback = false;
 
@@ -219,11 +186,11 @@ bool Solver1D::recoverPrimitives(std::vector<ConservedState>& cons, StepResult& 
             res.ok = false;
             res.failure = st.failure;
             res.failedCell = i;
-            return false;               // Abort : on n'invente aucun état
+            return false;
         }
-        if (usedFallback) modified = true;   // réparation NON CONSERVATIVE
+        if (usedFallback) modified = true;
 
-        // --- FLOORS : couche explicite, appliquée APRÈS le recovery ---------
+        //
         if (cfg_.floors.enabled) {
             counters_.minRhoBeforeFloor = std::min(counters_.minRhoBeforeFloor, p.rho);
             counters_.minUBeforeFloor   = std::min(counters_.minUBeforeFloor, p.u);
@@ -237,21 +204,7 @@ bool Solver1D::recoverPrimitives(std::vector<ConservedState>& cons, StepResult& 
 
         prim_[i] = p;
 
-        // --- CONTRAT DE CONSERVATION ----------------------------------------
-        // U est la variable ÉVOLUÉE par le schéma volumes finis : elle fait
-        // foi. Tant que le recovery réussit et qu'aucune politique n'a modifié
-        // P, U doit rester EXACTEMENT tel que produit par la mise à jour
-        // conservative — pas un aller-retour P->U->P.
         //
-        // Une version antérieure resynchronisait systématiquement
-        // (`cons[i] = primitiveToConserved(p, eos_)`), ce qui injectait à
-        // chaque sous-étage l'erreur d'arrondi de l'aller-retour dans la
-        // variable conservée et affaiblissait la propriété de conservation
-        // que tout le schéma est censé garantir.
-        //
-        // On ne resynchronise donc QUE si P a réellement changé — auquel cas
-        // la conservation est localement rompue par construction, et c'est
-        // comptabilisé.
         if (modified) {
             cons[i] = primitiveToConserved(p, eos_);
             ++counters_.conservativeResyncs;
@@ -279,16 +232,8 @@ StepResult Solver1D::step(double dt) {
     const int nTot = total();
     std::vector<std::array<double, 5>> rhs;
 
-    // INSTANTANÉ TRANSACTIONNEL : U et P au début du pas. En cas d'abandon,
-    // on restaure ce couple exact — un état à moitié avancé avec un `t_`
-    // inchangé ne correspondrait à aucun temps physique, et interdirait de
-    // réessayer avec un dt plus petit.
     const std::vector<ConservedState> u0 = cons_;
     const std::vector<PrimitiveState> p0 = prim_;
-    // Les DIAGNOSTICS font partie de la transaction, au même titre que l'état :
-    // un floor survenu dans une tentative abandonnée n'appartient pas à la
-    // trajectoire retenue. Il n'est pas perdu pour autant — il part dans la
-    // télémétrie des tentatives rejetées, qui, elle, n'est jamais annulée.
     const FloorCounters c0 = counters_;
     auto rollback = [&]() {
         cons_ = u0;
@@ -309,7 +254,7 @@ StepResult Solver1D::step(double dt) {
         }
     };
 
-    // --- Étage 1 -------------------------------------------------------------
+    //
     curStage_ = 1;
     applyBoundaryConserved();
     if (!computeRHS(cons_, rhs, res)) { res.failedStage = 1; ok_ = false; rollback(); return res; }
@@ -320,7 +265,7 @@ StepResult Solver1D::step(double dt) {
     applyBoundaryPrimitives();
     applyBoundaryConserved();
 
-    // --- Étage 2 (moyenne SSP) -----------------------------------------------
+    //
     curStage_ = 2;
     if (!computeRHS(cons_, rhs, res)) { res.failedStage = 2; ok_ = false; rollback(); return res; }
     std::vector<ConservedState> u2 = cons_;
@@ -336,7 +281,6 @@ StepResult Solver1D::step(double dt) {
     applyBoundaryPrimitives();
     applyBoundaryConserved();
 
-    // Le temps n'avance QUE si le pas est allé au bout.
     t_ += dt;
     (void)nTot;
     return res;
@@ -349,8 +293,6 @@ int Solver1D::advanceTo(double tEnd, int maxSteps) {
         if (t_ + dt > tEnd) dt = tEnd - t_;
         if (dt <= 0.0) break;
         const StepResult r = step(dt);
-        // Un pas abandonné n'est PAS un pas : ni compté, ni suivi d'un autre.
-        // L'état et le temps sont restés ceux du début du pas (rollback).
         if (!r.ok) break;
         ++n;
     }
