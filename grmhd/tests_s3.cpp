@@ -55,7 +55,7 @@ void testPhysicalFlux() {
         worst = std::max(worst, std::fabs(F[2]));
         worst = std::max(worst, std::fabs(F[3]));
         worst = std::max(worst, std::fabs(F[4]));
-        report("A1 fluide au repos : F = (0, p, 0, 0, 0)", worst, 1e-15);
+        report("A1 fluid at rest: F = (0, p, 0, 0, 0)", worst, 1e-15);
     }
 
     {
@@ -250,7 +250,7 @@ void testHLLE() {
         worst = std::max(worst, std::fabs(Fa[0] + Fb[0]) / std::max(std::fabs(Fa[0]), 1e-30));
         worst = std::max(worst, std::fabs(Fa[1] - Fb[1]) / std::max(std::fabs(Fa[1]), 1e-30));
         worst = std::max(worst, std::fabs(Fa[4] + Fb[4]) / std::max(std::fabs(Fa[4]), 1e-30));
-        report("C3 symetrie miroir des flux", worst, 1e-13);
+        report("C3 mirror symmetry of fluxes", worst, 1e-13);
     }
 
     // C4 — finitude sur des regimes extremes.
@@ -461,7 +461,7 @@ void testAbortRollbackAtStage2() {
     }
     reportBool("D8h3 U restaure a l'identique (bit a bit)", maxDU == 0.0);
     reportBool("D8h4 P restaure a l'identique (bit a bit)", maxDP == 0.0);
-    std::printf("       Stage-2 rollback : max|dU|=%.3e  max|dP|=%.3e  t inchange=%.17g\n",
+    std::printf("       Stage-2 rollback : max|dU|=%.3e  max|dP|=%.3e  t unchanged=%.17g\n",
                 maxDU, maxDP, s.time());
 }
 
@@ -522,10 +522,10 @@ void testDiagnosticsAreTransactional() {
         maxDU = std::max(maxDU, std::fabs(nowU[i].tau - u0[i].tau));
         maxDU = std::max(maxDU, std::fabs(nowP[i].rho - p0[i].rho));
     }
-    reportBool("D11d etat restaure a l'identique", maxDU == 0.0);
+    reportBool("D11d state restored identically", maxDU == 0.0);
 
     // Diagnostics « evolution acceptee » : restaures a l'identique, y compris
-    // les floors produits par l'etage 1 de la tentative abandonnee.
+    // including floors produced during stage 1 of the rejected attempt.
     const FloorCounters& c1 = s.counters();
     const bool countersRestored =
         c1.rhoFloored == c0.rhoFloored && c1.uFloored == c0.uFloored &&
@@ -640,7 +640,7 @@ void testSmoothConvergence() {
         }
         prevL1 = l1;
     }
-    reportBool("E1 mesure effectuee au-dessus du plancher d'arrondi", measuredAboveFloor);
+    reportBool("E1 measurement performed above roundoff floor", measuredAboveFloor);
     report("E2 ordre de convergence PLM+SSPRK2 >= 1.7", bestOrder >= 1.7 ? 0.0 : 1.0, 1e-15);
     std::printf("       -> ordre max observe : %.2f (attendu ~2 pour PLM/MC sur solution lisse ;\n"
                 "          le limiteur ecrete les extrema, ce qui degrade legerement l'ordre)\n",
@@ -693,7 +693,7 @@ void testExactSolverJumpConditions() {
 void testOracleSelfConvergence() {
     const double g = 5.0 / 3.0;
     RiemannState pre{10.0, 13.33, 0.0};
-    const double pTarget = 1.4476857;   // ~p* du probleme MM1
+    const double pTarget = 1.4476857;   // ~p* of the MM1 problem
 
     resetRarefactionClampHits();
     std::printf("       convergence de la quadrature RK4 vers la forme CLOSE :\n");
@@ -714,7 +714,7 @@ void testOracleSelfConvergence() {
     reportBool("F0b la quadrature converge vers la forme close (ordre >= 3)",
                bestOrder >= 3.0);
     std::printf("          ordre max observe : %.2f — la forme CLOSE est donc la\n"
-                "          limite exacte de l'integration ; c'est elle qu'utilise le\n"
+                "          exact integration limit; this is the form used by the\n"
                 "          solver, with no residual quadrature error.\n", bestOrder);
 
     // Impact sur les grandeurs REELLEMENT utilisees ensuite (p*, v*).
@@ -843,7 +843,7 @@ void testShockTubes() {
 //
 void testLorentzBoostInvariance() {
     const IdealGasEOS eos(4.0 / 3.0);
-    std::printf("       invariance des scalaires du fluide sous boost :\n");
+    std::printf("       fluid-scalar invariance under boost :\n");
     double worstRho = 0.0, worstU = 0.0, worstNorm = 0.0;
 
     for (double vb : {0.0, 0.3, 0.7, 0.95, 0.99}) {
@@ -886,9 +886,9 @@ void testLorentzBoostInvariance() {
         const double ep = std::fabs(sb.pStar - s0.pStar) / s0.pStar;
         const double evExpected = boost(s0.vStar);
         const double ev = std::fabs(sb.vStar - evExpected);
-        std::printf("         boost du probleme (vb=%.2f) : p* invariant a %.2e,\n"
+        std::printf("         boosted problem (vb=%.2f) : p* invariant a %.2e,\n"
                     "           v* suit l'addition relativiste a %.2e\n", vb, ep, ev);
-        report("G4a p* invariant sous boost du probleme", ep, 1e-9);
+        report("G4a p* invariant sous boosted problem", ep, 1e-9);
         report("G4b v* suit l'addition relativiste", ev, 1e-9);
     }
 }
@@ -935,7 +935,7 @@ void testHDF5() {
     }
     report("H4 aller-retour de TOUS les datasets (RHO,UU,U1,U2,U3,x)", worst, 1e-15);
     report("H5 serialized time", std::fabs(c.t - s.time()) / s.time(), 1e-15);
-    report("H6 gamma serialise", std::fabs(c.gam - cfg.gamma) / cfg.gamma, 1e-15);
+    report("H6 serialized gamma", std::fabs(c.gam - cfg.gamma) / cfg.gamma, 1e-15);
 
     const bool attrsOk = (c.stage == "S3-SRHD-flat")
                       && (c.metric == "minkowski-cartesian-1d")
@@ -945,7 +945,7 @@ void testHDF5() {
     std::printf("          absent_fields='%s'\n", c.absentFields.c_str());
     std::printf("       -> NOMS/CONVENTIONS preparant iharm (prims/RHO, UU, U1..U3),\n"
                 "          which is NOT full iharm snapshot compatibility :\n"
-                "          il manque B1..B3, la metrique/grille FMKS et le spin, et la\n"
+                "          B1..B3, the FMKS metric/grid, spin, and the\n"
                 "          geometrie est 1D cartesienne. Ces manques sont declares dans\n"
                 "          the file itself, not only in documentation.\n");
 }
@@ -1001,8 +1001,8 @@ void testRiemannVacuumDomain() {
     {
         struct Case { const char* label; RiemannState L, R; };
         const Case cases[] = {
-            {"double detente v=+-0.5, p=0.01", {1.0, 0.01, -0.5}, {1.0, 0.01, 0.5}},
-            {"double detente v=+-0.9, p=0.01", {1.0, 0.01, -0.9}, {1.0, 0.01, 0.9}},
+            {"double rarefaction v=+-0.5, p=0.01", {1.0, 0.01, -0.5}, {1.0, 0.01, 0.5}},
+            {"double rarefaction v=+-0.9, p=0.01", {1.0, 0.01, -0.9}, {1.0, 0.01, 0.9}},
             {"ultra-relativiste v=+-0.999",    {1.0, 1.0,  -0.999}, {1.0, 1.0, 0.999}},
             {"tiny pressure p=1e-6",         {1.0, 1e-6, -0.9}, {1.0, 1e-6, 0.9}},
             {"asymetrique",                    {2.0, 0.02, -0.8}, {0.5, 0.005, 0.7}},
@@ -1011,7 +1011,7 @@ void testRiemannVacuumDomain() {
         for (const Case& c : cases) {
             if (!riemannVacuumForms(c.L, c.R, g)) allDetected = false;
             const ExactRiemannSolution s = solveExactRiemannSRHD(c.L, c.R, g);
-            if (s.ok) { allRejected = false; std::printf("       (%s : ACCEPTE A TORT p*=%.3e)\n", c.label, s.pStar); }
+            if (s.ok) { allRejected = false; std::printf("       (%s : WRONGLY ACCEPTED p*=%.3e)\n", c.label, s.pStar); }
             if (s.failure != RiemannFailure::VacuumFormed) allFlagged = false;
         }
         reportBool("I3a vacuum formation detected by criterion", allDetected);
@@ -1165,7 +1165,7 @@ void testClampsNeverFire() {
     std::printf("       cs2Clamped=%lld discNegative=%lld denomDegenerate=%lld lambdaClamped=%lld\n",
                 c.cs2Clamped, c.discNegative, c.denomDegenerate, c.lambdaClamped);
     reportBool("L1 no characteristicSpeeds guard activated", c.total() == 0);
-    std::printf("       clamp de detente de l'oracle : %lld\n", rarefactionClampHits());
+    std::printf("       rarefaction-oracle clamp : %lld\n", rarefactionClampHits());
     reportBool("L2 no velocity clamp in rarefaction oracle",
                rarefactionClampHits() == 0);
 }
@@ -1202,7 +1202,7 @@ int main() {
     testHDF5();
     std::printf("\n  I -- Riemann-oracle domain (vacuum)\n");
     testRiemannVacuumDomain();
-    std::printf("\n  J -- symetrie de l'oracle (flux de masse signe)\n");
+    std::printf("\n  J -- oracle symmetry (signed mass flux)\n");
     testRiemannMirrorSymmetry();
     std::printf("\n  K -- convergence sur un MODE ACOUSTIQUE\n");
     testAcousticConvergence();
