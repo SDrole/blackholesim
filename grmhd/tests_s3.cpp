@@ -1212,7 +1212,7 @@ int main() {
     std::printf("---------------------------------------------------------------------\n");
     std::printf("  %d tests executes.\n", g_tests);
     if (g_failures == 0)
-        std::printf("  S3 VALIDE -- solveur SRHD de reference etabli.\n");
+        std::printf("  S3 VALIDATED -- reference SRHD solver established.\n");
     else
         std::printf("  %d FAILURE(S) -- S3 is NOT validated.\n", g_failures);
     std::printf("=====================================================================\n");
