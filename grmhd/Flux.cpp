@@ -10,7 +10,7 @@ FluidVars makeFluidVars(const PrimitiveState& P, const IdealGasEOS& eos) {
     f.rho = P.rho;
     f.u   = P.u;
     f.W   = lorentzFactor(P);
-    for (int i = 0; i < 3; ++i) f.v[i] = P.utilde[i] / f.W;   // v^i = ũ^i / W
+    for (int i = 0; i < 3; ++i) f.v[i] = P.utilde[i] / f.W;   // v^i = u_tilde^i/W
     f.p   = eos.pressure(P.rho, P.u);
     f.h   = eos.specificEnthalpy(P.rho, P.u);
     f.cs2 = eos.soundSpeed2(P.rho, P.u);
@@ -19,10 +19,10 @@ FluidVars makeFluidVars(const PrimitiveState& P, const IdealGasEOS& eos) {
 
 void physicalFlux(const FluidVars& f, const ConservedState& U, int dir, double F[5]) {
     const double vd = f.v[dir];
-    F[0] = U.D * vd;                                    // masse
+    F[0] = U.D * vd;                                         // mass
     for (int i = 0; i < 3; ++i)
-        F[1 + i] = U.S[i] * vd + ((i == dir) ? f.p : 0.0);   // moment (+ p sur la diagonale)
-    F[4] = (U.tau + f.p) * vd;                          // énergie (cf. dérivation en en-tête)
+        F[1 + i] = U.S[i] * vd + ((i == dir) ? f.p : 0.0);   // momentum
+    F[4] = (U.tau + f.p) * vd;                               // energy
 }
 
 namespace {
@@ -41,7 +41,7 @@ SignalSpeeds characteristicSpeeds(const FluidVars& f, int dir) {
 
     s.lambda0 = vx;
 
-    // Cas dégénéré : fluide froid (c_s = 0) -> advection pure.
+    // Degenerate cold-fluid limit: cs=0 -> pure advection.
     if (cs2 <= 0.0) {
         s.lambdaMinus = vx;
         s.lambdaPlus  = vx;
@@ -49,13 +49,13 @@ SignalSpeeds characteristicSpeeds(const FluidVars& f, int dir) {
     }
 
     const double one_m_v2cs2 = 1.0 - v2 * cs2;
-    // Radicande : (1-v²)[1 - v²c_s² - (v^x)²(1-c_s²)]
+    // Radicand: (1-v^2)[1-v^2 cs^2-(v^x)^2(1-cs^2)]
     const double inner = 1.0 - v2 * cs2 - vx * vx * (1.0 - cs2);
     const double disc  = (1.0 - v2) * inner;
     const double root  = (disc > 0.0) ? std::sqrt(disc) : 0.0;
     if (!(disc > 0.0)) ++g_clamps.discNegative;
 
-    if (std::fabs(one_m_v2cs2) < 1e-300) {   // ne peut arriver que si v²=c_s²=1
+    if (std::fabs(one_m_v2cs2) < 1e-300) {
         ++g_clamps.denomDegenerate;
         s.lambdaMinus = -1.0;
         s.lambdaPlus  =  1.0;
@@ -66,10 +66,9 @@ SignalSpeeds characteristicSpeeds(const FluidVars& f, int dir) {
     s.lambdaMinus = (vx * (1.0 - cs2) - cs * root) / one_m_v2cs2;
     s.lambdaPlus  = (vx * (1.0 - cs2) + cs * root) / one_m_v2cs2;
 
-    // Garde-fou de causalité. Ce n'est PAS un maquillage : les tests vérifient
-    // séparément que |λ| < 1 est déjà satisfait analytiquement sur tout le
-    // domaine physique. Ce clamp ne protège que contre un état d'entrée déjà
-    // hors domaine (v ≥ 1), qui serait signalé ailleurs.
+    // Final causality guard. Validation separately checks that physical input
+    // already satisfies |lambda|<1, so this clamp should remain inactive in
+    // scientific tests and only protect against an invalid upstream state.
     const double lmC = std::clamp(s.lambdaMinus, -1.0, 1.0);
     const double lpC = std::clamp(s.lambdaPlus,  -1.0, 1.0);
     if (lmC != s.lambdaMinus) ++g_clamps.lambdaClamped;
