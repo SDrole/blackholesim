@@ -882,7 +882,7 @@ RenderResult Renderer::renderGPU() const {
         const int sReq = (cfg_.samples < 1) ? 1 : cfg_.samples;
         p.S = (sReq > 8) ? 8 : sReq;
         if (sReq > 8)
-            std::fprintf(stderr, "  [GPU] samples=%d borné à 8 (utiliser ringSupersample pour la finesse des sous-anneaux)\n", sReq);
+            std::fprintf(stderr, "  [GPU] samples=%d capped at 8 (use ringSupersample for photon-subring detail)\n", sReq);
     }
     p.exposure = cfg_.exposure;
 
